@@ -15,6 +15,10 @@ SFチックな "Cyberpunk Glass/Neon" デザインを採用し、没入感のあ
   - 中央サーバー不要（シグナリングのみ）。参加者全員が互いに直接接続し、対等な関係で通信します。
   - 複数人の画面を同時に共有・視聴可能（Multi-Stream Support）。
 
+- ❤️ **Robust Connection Stability**
+  - **Heartbeat & Auto-Reconnect**: ネットワーク切断を自動検知し、シームレスに再接続します。
+  - **Smart Recovery**: 一時的な回線不安定時もセッションを維持しようと試みます。
+
 - 🖥️ **Ultra-Low Latency Screen Sharing**
   - WebRTCによる低遅延配信。
   - **Adaptive Bitrate Control**: ネットワーク品質（RTT/パケットロス）をリアルタイム監視し、画質を自動最適化します。
