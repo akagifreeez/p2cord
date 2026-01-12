@@ -1,0 +1,28 @@
+[package]
+name = "p2cord"
+version = "0.1.0"
+description = "P2Cord - Light Discord Client with P2D Core"
+authors = ["P2D Team"]
+edition = "2021"
+
+[lib]
+name = "p2cord_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+enigo = "0.3"
+arboard = "3.4"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
+url = "2.4"
+futures-util = "0.3"
+rusqlite = { version = "0.33", features = ["bundled"] }
+urlencoding = "2.1"

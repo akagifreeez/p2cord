@@ -1,0 +1,50 @@
+    Checking p2d v0.1.0 (C:\Users\akagifreeez\Desktop\light Discord by p2d\p2d\src-tauri)
+warning: unused import: `serenity::model::channel::Message`
+ --> src\discord.rs:2:5
+  |
+2 | use serenity::model::channel::Message;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `serenity::model::guild::GuildInfo`
+ --> src\discord.rs:3:5
+  |
+3 | use serenity::model::guild::GuildInfo;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serenity::model::guild::PartialGuild`
+ --> src\discord.rs:5:5
+  |
+5 | use serenity::model::guild::PartialGuild;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> src\discord.rs:76:15
+   |
+76 |         icon: g.icon,
+   |               ^^^^^^ expected `Option<String>`, found `Option<ImageHash>`
+   |
+   = note: expected enum `std::option::Option<std::string::String>`
+              found enum `std::option::Option<serenity::all::ImageHash>`
+
+error[E0061]: this method takes 3 arguments but 2 arguments were supplied
+    --> src\discord.rs:109:25
+     |
+ 109 |     let messages = http.get_messages(ChannelId::new(cid), None).await.map_err(|e| e.to_string())?;
+     |                         ^^^^^^^^^^^^--------------------------- argument #3 of type `std::option::Option<u8>` is missing
+     |
+note: method defined here
+    --> C:\Users\akagifreeez\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serenity-0.12.5\src\http\client.rs:4327:18
+     |
+4327 |     pub async fn get_messages(
+     |                  ^^^^^^^^^^^^
+help: provide the argument
+     |
+ 109 |     let messages = http.get_messages(ChannelId::new(cid), None, /* std::option::Option<u8> */).await.map_err(|e| e.to_string())?;
+     |                                                               +++++++++++++++++++++++++++++++
+
+Some errors have detailed explanations: E0061, E0308.
+For more information about an error, try `rustc --explain E0061`.
+warning: `p2d` (lib) generated 3 warnings
+error: could not compile `p2d` (lib) due to 2 previous errors; 3 warnings emitted

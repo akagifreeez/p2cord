@@ -1,0 +1,116 @@
+    Checking p2d v0.1.0 (C:\Users\akagifreeez\Desktop\light Discord by p2d\p2d\src-tauri)
+error: expected identifier, found keyword `mod`
+   --> src\lib.rs:209:1
+    |
+209 | mod gateway; // Discord Gateway
+    | ^^^
+
+error[E0432]: unresolved import `futures_util`
+ --> src\gateway.rs:8:5
+  |
+8 | use futures_util::{StreamExt, SinkExt};
+  |     ^^^^^^^^^^^^ use of unresolved module or unlinked crate `futures_util`
+  |
+  = help: if you wanted to use a crate named `futures_util`, use `cargo add futures_util` to add it to your `Cargo.toml`
+
+warning: unused import: `crate::discord::DiscordState`
+ --> src\gateway.rs:1:5
+  |
+1 | use crate::discord::DiscordState;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Manager`
+ --> src\gateway.rs:2:24
+  |
+2 | use tauri::{AppHandle, Manager, Emitter};
+  |                        ^^^^^^^
+
+warning: unused import: `tokio::net::TcpStream`
+ --> src\gateway.rs:3:5
+  |
+3 | use tokio::net::TcpStream;
+  |     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `MaybeTlsStream` and `WebSocketStream`
+ --> src\gateway.rs:4:72
+  |
+4 | use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+  |                                                                        ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^
+
+warning: unused imports: `Arc` and `Mutex`
+ --> src\gateway.rs:9:17
+  |
+9 | use std::sync::{Arc, Mutex};
+  |                 ^^^  ^^^^^
+
+error[E0599]: no method named `split` found for struct `WebSocketStream<S>` in the current scope
+    --> src\gateway.rs:34:43
+     |
+  34 |     let (mut write, mut read) = ws_stream.split();
+     |                                           ^^^^^ method not found in `WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>`
+     |
+    ::: C:\Users\akagifreeez\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\futures-util-0.3.31\src\stream\stream\mod.rs:1582:8
+     |
+1582 |     fn split<Item>(self) -> (SplitSink<Self, Item>, SplitStream<Self>)
+     |        ----- the method is available for `WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>` here
+     |
+     = help: items from traits can only be used if the trait is in scope
+help: trait `StreamExt` which provides `split` is implemented but not in scope; perhaps you want to import it
+     |
+   1 + use futures_util::stream::stream::StreamExt;
+     |
+
+error[E0282]: type annotations needed
+  --> src\gateway.rs:42:29
+   |
+42 |             if let Err(e) = write.send(msg).await {
+   |                             ^^^^^ cannot infer type
+
+error[E0282]: type annotations needed
+  --> src\gateway.rs:60:27
+   |
+60 |     while let Some(msg) = read.next().await {
+   |                           ^^^^ cannot infer type
+
+error[E0282]: type annotations needed
+  --> src\gateway.rs:61:19
+   |
+61 |         let msg = msg.map_err(|e| e.to_string())?;
+   |                   ^^^ cannot infer type
+
+error[E0282]: type annotations needed
+  --> src\gateway.rs:61:32
+   |
+61 |         let msg = msg.map_err(|e| e.to_string())?;
+   |                                ^  - type must be known at this point
+   |
+help: consider giving this closure parameter an explicit type
+   |
+61 |         let msg = msg.map_err(|e: /* Type */| e.to_string())?;
+   |                                 ++++++++++++
+
+error[E0277]: the trait bound `discord::SimpleMessage: Clone` is not satisfied
+   --> src\gateway.rs:111:69
+    |
+111 | ...                   let _ = app.emit("message_create", m);
+    |                                   ----                   ^ unsatisfied trait bound
+    |                                   |
+    |                                   required by a bound introduced by this call
+    |
+help: the trait `Clone` is not implemented for `discord::SimpleMessage`
+   --> src\discord.rs:110:1
+    |
+110 | pub struct SimpleMessage {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `emit`
+   --> C:\Users\akagifreeez\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-2.9.5\src\lib.rs:952:26
+    |
+952 |   fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> Result<()> {
+    |                          ^^^^^ required by this bound in `Emitter::emit`
+
+Some errors have detailed explanations: E0277, E0282, E0432, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `p2d` (lib) generated 5 warnings
+error: could not compile `p2d` (lib) due to 8 previous errors; 5 warnings emitted
