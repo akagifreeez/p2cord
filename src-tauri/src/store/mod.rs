@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 use tauri::State;
 
-use crate::discord::{SimpleMessage, DiscordEmbed, DiscordAttachment};
+use crate::services::models::{SimpleMessage, DiscordEmbed, DiscordAttachment};
 
 pub struct DatabaseState {
     pub conn: Arc<Mutex<Connection>>,

@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useSessionStore } from './stores/sessionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { VoiceLayout } from './components/VoiceLayout';
 
 interface Guild {
     id: string;
@@ -45,33 +47,122 @@ interface Message {
     attachments: Attachment[];
 }
 
+interface SimpleMessage {
+    id: string;
+    author_id: string;
+    author_name: string;
+    author_avatar: string;
+    content: string;
+    timestamp: string;
+    attachments?: string; // JSON string
+}
+
 function App() {
     const [token, setToken] = useState('');
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [status, setStatus] = useState('');
 
     const [guilds, setGuilds] = useState<Guild[]>([]);
-    const [selectedGuild, setSelectedGuild] = useState<string | null>(null);
+    // Use global store
+    const {
+        currentGuildId: selectedGuild,
+        currentChannelId: selectedChannel,
+        setCurrentGuild,
+        setCurrentChannel,
+        connectedVoiceChannelId,
+        setConnectedVoiceChannel,
+        remoteSpeakers,
+        setRemoteSpeaker,
+        addPeer,
+        removePeer,
+        clearPeers,
+        localSpeaking,
+        setLocalSpeaking,
+        isVoiceTransitioning,
+        setVoiceTransitioning,
+    } = useSessionStore();
 
+    // Derived local state or keeping same variable names for minimal refactor
     const [channels, setChannels] = useState<Channel[]>([]);
-    const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
     const selectedChannelRef = useRef<string | null>(null); // Ref to track selected channel in listener
 
     useEffect(() => {
         selectedChannelRef.current = selectedChannel;
     }, [selectedChannel]);
 
+    // Sync Audio State on Mount
+    useEffect(() => {
+        invoke<{ isMuted: boolean, isDeafened: boolean }>('get_audio_state')
+            .then(state => {
+                setIsMuted(state.isMuted);
+                setIsDeafened(state.isDeafened);
+            })
+            .catch(e => console.error("Failed to get audio state:", e));
+    }, []);
+
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoadingChannel, setIsLoadingChannel] = useState(false);
     const [isSwitchingChannel, setIsSwitchingChannel] = useState(false); // チャンネル切り替え中のオーバーレイ制御
     const fetchIdRef = useRef(0); // フェッチバージョン管理用
+
+    // Audio State
+    const [isMuted, setIsMuted] = useState(false);
+    const [isDeafened, setIsDeafened] = useState(false);
+
+    const handleToggleMute = async () => {
+        try {
+            const newState = await invoke<boolean>('toggle_mute');
+            setIsMuted(newState);
+        } catch (e) {
+            console.error("Failed to toggle mute:", e);
+        }
+    };
+
+    const handleToggleDeafen = async () => {
+        try {
+            const newState = await invoke<boolean>('toggle_deafen');
+            setIsDeafened(newState);
+        } catch (e) {
+            console.error("Failed to toggle deafen:", e);
+        }
+    };
+
+    // VAD State (Global)
+    // const [isSpeaking, setIsSpeaking] = useState(false); // Removed local state
+
+    useEffect(() => {
+        const unlistenPromise = listen<boolean>('voice-activity', (event) => {
+            setLocalSpeaking(event.payload);
+        });
+
+        const unlistenRemotePromise = listen<{ client_id: string, is_speaking: boolean }>('remote-voice-activity', (event) => {
+            console.log("Remote VAD:", event.payload);
+            setRemoteSpeaker(event.payload.client_id, event.payload.is_speaking);
+        });
+
+        const unlistenJoinPromise = listen<string>('peer-joined', (event) => {
+            console.log("Peer Joined:", event.payload);
+            addPeer(event.payload);
+        });
+
+        const unlistenLeavePromise = listen<string>('peer-left', (event) => {
+            console.log("Peer Left:", event.payload);
+            removePeer(event.payload);
+        });
+
+        return () => {
+            unlistenPromise.then(unlisten => unlisten());
+            unlistenRemotePromise.then(unlisten => unlisten());
+            unlistenJoinPromise.then(unlisten => unlisten());
+            unlistenLeavePromise.then(unlisten => unlisten());
+        };
+    }, []);
 
     // Search state
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<Message[] | null>(null);
     const [isSearching, setIsSearching] = useState(false);
 
-    // Background fetch state
     const [isFetchingHistory, setIsFetchingHistory] = useState(false);
     const channelOpenTimeRef = useRef<number | null>(null);
 
@@ -173,8 +264,8 @@ function App() {
     };
 
     const fetchChannels = async (guildId: string) => {
-        setSelectedGuild(guildId);
-        setSelectedChannel(null);
+        setCurrentGuild(guildId);
+        setCurrentChannel(null);
         setMessages([]);
         try {
             const res = await invoke<Channel[]>('get_channels', { guildId });
@@ -191,56 +282,109 @@ function App() {
     const fetchMessages = async (channelId: string, beforeId?: string) => {
         const currentFetchId = ++fetchIdRef.current;
 
+        // Find channel type
+        const targetChannel = channels.find(c => c.id === channelId);
+        const isVoice = targetChannel?.kind === 'Voice' || targetChannel?.kind === 'voice';
+
         if (!beforeId) {
-            // チャンネル新規選択: 即座にマスク表示 (Overlay)
-            setSelectedChannel(channelId);
-            setIsSwitchingChannel(true);
+            // Channel Selection
+            setCurrentChannel(channelId); // Always update view
             setSearchQuery('');
             setSearchResults(null);
-            setMessages([]);
-            setIsLoadingChannel(true);
             setShowScrollButton(false);
 
-            // 1. キャッシュ取得
+            if (isVoice) {
+                // Prevent duplicate join if already in this voice channel
+                if (channelId === connectedVoiceChannelId) {
+                    console.log("Already in voice channel:", channelId);
+                    return;
+                }
+
+                // Prevent rapid toggling
+                if (isVoiceTransitioning) {
+                    console.log("Voice operation in progress, please wait...");
+                    return;
+                }
+
+                // VOICE: Join P2P
+                console.log("Joining Voice Channel:", channelId);
+                setVoiceTransitioning(true);
+                setConnectedVoiceChannel(channelId);
+                clearPeers();
+                setMessages([]);
+                setIsLoadingChannel(false);
+
+                try {
+                    // Start P2P
+                    await invoke('join_room', {
+                        guildId: selectedGuild,
+                        channelId: channelId
+                    });
+                } catch (e) {
+                    console.error("Failed to join voice:", e);
+                    setStatus(`Voice Error: ${e}`);
+                } finally {
+                    // Allow next operation after delay
+                    setTimeout(() => setVoiceTransitioning(false), 1000);
+                }
+                return; // Stop here for Voice
+            }
+
+            // TEXT: Only fetch messages, DO NOT touch P2P
+            setIsSwitchingChannel(true);
+            setMessages([]);
+            setIsLoadingChannel(true);
+
+            // 1. Cache
             try {
                 const cachedMsgs = await invoke<Message[]>('get_cached_messages', { channelId, limit: 50 });
                 if (currentFetchId !== fetchIdRef.current) return;
-
                 if (cachedMsgs.length > 0) {
                     setMessages(cachedMsgs.reverse());
                     setIsLoadingChannel(false);
-                    // note: オーバーレイ除去とスクロールは useLayoutEffect で行う
-                } else {
-                    // キャッシュなし
-                    setIsLoadingChannel(true);
-                    // メッセージ0件の場合も useLayoutEffect でマスクを外す
                 }
-            } catch {
-                setIsLoadingChannel(true);
-            }
+            } catch { }
         }
 
         if (!selectedGuild) return;
 
-        // 2. APIフェッチ
-        try {
-            const res = await invoke<Message[]>('get_messages', { guildId: selectedGuild, channelId, beforeId });
-            if (currentFetchId !== fetchIdRef.current) return;
+        if (!isVoice) {
+            // 2. API Fetch (Text Only)
+            try {
+                // Use new `fetch_messages` command
+                const fetchedMsgs = await invoke<SimpleMessage[]>('fetch_messages', {
+                    guildId: selectedGuild,
+                    channelId: channelId,
+                });
 
-            if (beforeId) {
-                // 過去ログ読み込み時はそのまま追加(スクロール最適化は別途必要かもだが一旦保持)
-                setMessages(prev => [...res.reverse(), ...prev]);
-            } else {
-                setMessages(res.reverse());
-                setIsLoadingChannel(false);
-                // オーバーレイ除去とスクロールは useLayoutEffect で行う
-            }
-        } catch (e) {
-            if (currentFetchId === fetchIdRef.current) {
-                setStatus(`Error fetching messages: ${e}`);
-                setIsLoadingChannel(false);
-                // エラー時もマスク解除が必要
-                requestAnimationFrame(() => setIsSwitchingChannel(false));
+                // Mapping SimpleMessage -> Message
+                const mapped: Message[] = fetchedMsgs.map(m => ({
+                    id: m.id,
+                    content: m.content,
+                    author: m.author_name,
+                    timestamp: m.timestamp,
+                    guild_id: selectedGuild!,
+                    channel_id: channelId,
+                    embeds: [],
+                    attachments: m.attachments ? JSON.parse(m.attachments) : [],
+                }));
+
+                if (currentFetchId !== fetchIdRef.current) return;
+
+                setMessages(prev => {
+                    if (beforeId) return [...prev, ...mapped.reverse()]; // Load more (top)
+                    return mapped.reverse(); // Initial load
+                });
+
+            } catch (e) {
+                if (currentFetchId === fetchIdRef.current) {
+                    setStatus(`Fetch Error: ${e}`);
+                }
+            } finally {
+                if (currentFetchId === fetchIdRef.current) {
+                    setIsLoadingChannel(false);
+                    requestAnimationFrame(() => setIsSwitchingChannel(false));
+                }
             }
         }
     };
@@ -256,8 +400,6 @@ function App() {
                 }
 
                 // 2. マスク解除 (Paint許可)
-                // requestAnimationFrameを使って次の描画フレームで解除することで、
-                // スクロール位置が確定した状態を描画させる
                 requestAnimationFrame(() => {
                     setIsSwitchingChannel(false);
                 });
@@ -439,164 +581,251 @@ function App() {
                         );
                     })()}
                 </div>
-            </div>
 
-            {/* Main: Chat */}
-            <div className="flex-1 flex flex-col bg-black relative">
-                <div className="p-4 border-b border-gray-800 flex flex-col gap-2">
-                    <div className="flex justify-between items-center">
-                        <span className="font-bold text-lg text-terminal-green">Chat</span>
-                        <span className="text-sm text-gray-500">{status}</span>
-                    </div>
-                    {/* Search Bar */}
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            placeholder="Search messages..."
-                            className="flex-1 bg-gray-900 border border-gray-700 px-3 py-1 rounded text-white text-sm focus:outline-none focus:border-terminal-green"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                            disabled={!selectedChannel}
-                        />
-                        {searchResults !== null && (
-                            <button onClick={clearSearch} className="text-xs text-gray-400 hover:text-white px-2">
-                                Clear ({searchResults.length})
+                {/* Voice Connection Bar */}
+                {connectedVoiceChannelId && (
+                    <div className="bg-[#1a1a1a] border-t border-black/50 p-2">
+                        <div className="flex items-center justify-between group">
+                            <div className="flex-1 min-w-0">
+                                <div className="text-green-500 text-[10px] font-bold uppercase tracking-wider mb-0.5 animate-pulse">Voice Connected</div>
+                                <div className="text-gray-200 text-xs font-medium truncate flex items-center gap-1">
+                                    <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
+                                    {channels.find(c => c.id === connectedVoiceChannelId)?.name || 'Unknown Channel'}
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setConnectedVoiceChannel(null);
+                                    clearPeers();
+                                }}
+                                className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                                title="Disconnect"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                             </button>
-                        )}
+                        </div>
+                    </div>
+                )}
+
+                {/* User Area */}
+                <div className="bg-[#050505] p-2 flex items-center gap-2 border-t border-gray-800">
+                    <div className="relative group cursor-pointer">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border transition-all duration-200 ${localSpeaking
+                            ? 'bg-green-500/20 text-green-400 border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]'
+                            : 'bg-terminal-green/20 text-terminal-green border-terminal-green/30'
+                            }`}>
+                            {localSpeaking && (
+                                <div className="absolute inset-0 rounded-full border-2 border-green-500 animate-ping opacity-75"></div>
+                            )}
+                            P
+                        </div>
+                        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-black rounded-full"></div>
+                    </div>
+                    <div className="flex-1 min-w-0 pointer-events-none">
+                        <div className="text-xs font-bold text-white truncate">Player</div>
+                        <div className="text-[10px] text-gray-500 truncate">Online</div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={handleToggleMute}
+                            className={`p-1.5 rounded hover:bg-gray-800 transition-colors ${isMuted ? 'text-red-500 relative' : 'text-gray-400'}`}
+                            title={isMuted ? "Unmute" : "Mute"}
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                {isMuted ? (
+                                    <>
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l16 16" className="text-red-500" />
+                                    </>
+                                ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                )}
+                            </svg>
+                        </button>
+                        <button
+                            onClick={handleToggleDeafen}
+                            className={`p-1.5 rounded hover:bg-gray-800 transition-colors ${isDeafened ? 'text-red-500 relative' : 'text-gray-400'}`}
+                            title={isDeafened ? "Undeafen" : "Deafen"}
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                {isDeafened ? (
+                                    <>
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l16 16" className="text-red-500" />
+                                    </>
+                                ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                                )}
+                            </svg>
+                        </button>
                     </div>
                 </div>
+            </div>
 
-                {/* Message List Wrapper (Relative for overlay) */}
-                <div className="flex-1 relative flex flex-col overflow-hidden">
-                    {/* Overlay for Instant Switching (Iron Curtain) */}
-                    {isSwitchingChannel && (
-                        <div className="absolute inset-0 bg-black z-50 flex items-center justify-center">
-                            <div className="text-terminal-green font-bold animate-pulse">Loading...</div>
-                        </div>
-                    )}
-
-                    <div
-                        key={selectedChannel || 'empty'}
-                        ref={messagesContainerRef}
-                        className="flex-1 overflow-y-auto p-4 space-y-4"
-                        onScroll={handleMessagesScroll}
-                    >
-                        {isLoadingChannel && (
-                            <div className="text-center text-gray-500 text-sm py-4">Loading messages...</div>
-                        )}
-                        {isSearching && (
-                            <div className="text-center text-gray-500 text-sm py-2">Searching...</div>
-                        )}
-                        {isLoadingMore && !searchResults && (
-                            <div className="text-center text-gray-500 text-sm py-2">Loading older messages...</div>
-                        )}
-                        {(searchResults || messages).length === 0 ? (
-                            <div className="text-center text-gray-600 mt-10">
-                                {searchResults !== null ? 'No search results' : 'Select a channel to view messages'}
+            {/* Main: Chat or Voice */}
+            {(selectedChannel && (channels.find(c => c.id === selectedChannel)?.kind === 'Voice' || channels.find(c => c.id === selectedChannel)?.kind === 'voice')) ? (
+                <VoiceLayout />
+            ) : (
+                <>
+                    {/* Chat Header and Search - Kept inside Main Area for Text */}
+                    <div className="flex-1 flex flex-col bg-black relative">
+                        <div className="p-4 border-b border-gray-800 flex flex-col gap-2">
+                            <div className="flex justify-between items-center">
+                                <span className="font-bold text-lg text-terminal-green">Chat</span>
+                                <span className="text-sm text-gray-500">{status}</span>
                             </div>
-                        ) : (
-                            (searchResults || messages).map((m) => (
-                                <div key={m.id} className="group hover:bg-gray-900 p-2 -mx-2 rounded">
-                                    <div className="flex items-baseline gap-2 flex-wrap">
-                                        <span className="font-bold text-blue-400">{m.author}</span>
-                                        <span className="text-xs text-gray-600">
-                                            {searchResults
-                                                ? new Date(m.timestamp).toLocaleString()
-                                                : new Date(m.timestamp).toLocaleTimeString()}
-                                        </span>
-                                        {searchResults && m.channel_id !== selectedChannel && (
-                                            <span className="text-xs bg-gray-800 text-gray-400 px-1 rounded">
-                                                #{channels.find(c => c.id === m.channel_id)?.name || 'unknown'}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="mt-1 text-gray-300 whitespace-pre-wrap break-words">{m.content}</div>
+                            {/* Search Bar */}
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Search messages..."
+                                    className="flex-1 bg-gray-900 border border-gray-700 px-3 py-1 rounded text-white text-sm focus:outline-none focus:border-terminal-green"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                                    disabled={!selectedChannel}
+                                />
+                                {searchResults !== null && (
+                                    <button onClick={clearSearch} className="text-xs text-gray-400 hover:text-white px-2">
+                                        Clear ({searchResults.length})
+                                    </button>
+                                )}
+                            </div>
+                        </div>
 
-                                    {/* Embeds Rendering */}
-                                    {m.embeds && m.embeds.map((embed, idx) => (
-                                        <div key={idx} className="mt-2 border-l-4 bg-gray-900 rounded p-3" style={{ borderLeftColor: embed.color ? `#${embed.color.toString(16).padStart(6, '0')}` : '#202225' }}>
-                                            <div className="flex gap-4">
-                                                <div className="flex-1 min-w-0">
-                                                    {embed.title && <div className="font-bold text-white mb-1">{embed.title}</div>}
-                                                    {embed.description && <div className="text-gray-300 text-sm whitespace-pre-wrap break-words">{embed.description}</div>}
-                                                    {embed.image && <img src={embed.image.url} alt="Embed" className="mt-2 max-w-full rounded" style={{ maxHeight: '300px' }} />}
-                                                    {embed.footer && (
-                                                        <div className="mt-2 text-xs text-gray-500 flex items-center gap-1">
-                                                            {embed.footer.icon_url && <img src={embed.footer.icon_url} alt="" className="w-4 h-4 rounded-full" />}
-                                                            <span>{embed.footer.text}</span>
+                        {/* Message List Wrapper */}
+                        <div className="flex-1 relative flex flex-col overflow-hidden">
+                            <div
+                                key={selectedChannel || 'empty'}
+                                ref={messagesContainerRef}
+                                className="flex-1 overflow-y-auto p-4 space-y-4"
+                                style={{
+                                    visibility: isSwitchingChannel ? 'hidden' : 'visible',
+                                }}
+                                onScroll={handleMessagesScroll}
+                            >
+                                {isLoadingChannel && (
+                                    <div className="text-center text-gray-500 text-sm py-4">Loading messages...</div>
+                                )}
+                                {isSearching && (
+                                    <div className="text-center text-gray-500 text-sm py-2">Searching...</div>
+                                )}
+                                {isLoadingMore && !searchResults && (
+                                    <div className="text-center text-gray-500 text-sm py-2">Loading older messages...</div>
+                                )}
+                                {(searchResults || messages).length === 0 ? (
+                                    <div className="text-center text-gray-600 mt-10">
+                                        {searchResults !== null ? 'No search results' : 'Select a channel to view messages'}
+                                    </div>
+                                ) : (
+                                    (searchResults || messages).map((m) => (
+                                        <div key={m.id} className="group hover:bg-gray-900 p-2 -mx-2 rounded">
+                                            <div className="flex items-baseline gap-2 flex-wrap">
+                                                <span className="font-bold text-blue-400">{m.author}</span>
+                                                <span className="text-xs text-gray-600">
+                                                    {searchResults
+                                                        ? new Date(m.timestamp).toLocaleString()
+                                                        : new Date(m.timestamp).toLocaleTimeString()}
+                                                </span>
+                                                {searchResults && m.channel_id !== selectedChannel && (
+                                                    <span className="text-xs bg-gray-800 text-gray-400 px-1 rounded">
+                                                        #{channels.find(c => c.id === m.channel_id)?.name || 'unknown'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="mt-1 text-gray-300 whitespace-pre-wrap break-words">{m.content}</div>
+
+                                            {/* Embeds Rendering */}
+                                            {m.embeds && m.embeds.map((embed, idx) => (
+                                                <div key={idx} className="mt-2 border-l-4 bg-gray-900 rounded p-3" style={{ borderLeftColor: embed.color ? `#${embed.color.toString(16).padStart(6, '0')}` : '#202225' }}>
+                                                    <div className="flex gap-4">
+                                                        <div className="flex-1 min-w-0">
+                                                            {embed.title && <div className="font-bold text-white mb-1">{embed.title}</div>}
+                                                            {embed.description && <div className="text-gray-300 text-sm whitespace-pre-wrap break-words">{embed.description}</div>}
+                                                            {embed.image && <img src={embed.image.url} alt="Embed" className="mt-2 max-w-full rounded" style={{ maxHeight: '300px' }} />}
+                                                        </div>
+                                                        {embed.thumbnail && (
+                                                            <div className="flex-shrink-0">
+                                                                <img src={embed.thumbnail.url} alt="Thumbnail" className="w-20 h-20 rounded object-cover" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {/* Attachments Rendering */}
+                                            {m.attachments && m.attachments.map((att) => (
+                                                <div key={att.id} className="mt-2">
+                                                    {att.content_type?.startsWith('image/') ? (
+                                                        <img
+                                                            src={att.url}
+                                                            alt={att.filename}
+                                                            width={att.width}
+                                                            height={att.height}
+                                                            className="max-w-full rounded bg-gray-900"
+                                                            style={{
+                                                                maxHeight: '350px',
+                                                                height: 'auto', // Preserve aspect ratio if width is constrained
+                                                                width: 'auto',  // Allow width to shrink if height is constrained
+                                                                aspectRatio: att.width && att.height ? `${att.width}/${att.height}` : undefined
+                                                            }}
+                                                        />
+                                                    ) : (
+                                                        <div className="bg-gray-800 p-2 rounded flex items-center gap-2 max-w-sm border border-gray-700">
+                                                            <div className="text-2xl">📄</div>
+                                                            <div className="overflow-hidden">
+                                                                <div className="font-bold text-sm truncate text-gray-300">{att.filename}</div>
+                                                                <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">Download</a>
+                                                            </div>
                                                         </div>
                                                     )}
                                                 </div>
-                                                {embed.thumbnail && (
-                                                    <div className="flex-shrink-0">
-                                                        <img src={embed.thumbnail.url} alt="Thumbnail" className="w-20 h-20 rounded object-cover" />
-                                                    </div>
-                                                )}
-                                            </div>
+                                            ))}
                                         </div>
-                                    ))}
+                                    ))
+                                )}
+                                <div ref={messagesEndRef} />
+                            </div>
 
-                                    {/* Attachments Rendering */}
-                                    {m.attachments && m.attachments.map((att) => (
-                                        <div key={att.id} className="mt-2">
-                                            {att.content_type?.startsWith('image/') ? (
-                                                <img src={att.url} alt={att.filename} className="max-w-full rounded" style={{ maxHeight: '350px' }} />
-                                            ) : (
-                                                <div className="bg-gray-800 p-2 rounded flex items-center gap-2 max-w-sm border border-gray-700">
-                                                    <div className="text-2xl">📄</div>
-                                                    <div className="overflow-hidden">
-                                                        <div className="font-bold text-sm truncate text-gray-300">{att.filename}</div>
-                                                        <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">Download</a>
-                                                    </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            ))
-                        )}
-                        <div ref={messagesEndRef} />
+                            {/* Scroll Button */}
+                            {showScrollButton && (
+                                <button
+                                    onClick={scrollToBottom}
+                                    className="absolute bottom-20 right-8 bg-gray-800 p-2 rounded-full shadow-lg hover:bg-gray-700 animate-bounce"
+                                >
+                                    ⬇
+                                </button>
+                            )}
+
+                            {/* Input Area */}
+                            <div className="p-4 bg-gray-900 border-t border-gray-800">
+                                <input
+                                    type="text"
+                                    placeholder={selectedChannel ? `Message #${channels.find(c => c.id === selectedChannel)?.name}` : "Select a channel"}
+                                    className={`w-full bg-gray-800 border border-gray-700 p-3 rounded text-white focus:outline-none focus:border-terminal-green ${!selectedChannel ? 'cursor-not-allowed opacity-50' : ''}`}
+                                    disabled={!selectedChannel}
+                                    onKeyDown={async (e) => {
+                                        if (e.key === 'Enter' && selectedChannel && selectedGuild) {
+                                            const input = e.currentTarget;
+                                            const content = input.value.trim();
+                                            if (!content) return;
+
+                                            input.value = ''; // Clear immediately
+                                            try {
+                                                await invoke<Message>('send_message', { guildId: selectedGuild, channelId: selectedChannel, content });
+                                                // Gateway will handle adding the message via MESSAGE_CREATE event
+                                            } catch (err) {
+                                                setStatus(`Send Failed: ${err}`);
+                                                input.value = content; // Revert on failure
+                                            }
+                                        }
+                                    }}
+                                />
+                            </div>
+                        </div>
                     </div>
-
-                    {/* Scroll to Bottom Button */}
-                    {showScrollButton && (
-                        <button
-                            onClick={scrollToBottom}
-                            className="absolute bottom-4 right-6 bg-gray-800 hover:bg-gray-700 text-white rounded-full p-3 shadow-lg transition"
-                            title="Scroll to bottom"
-                        >
-                            ↓
-                        </button>
-                    )}
-                </div>
-
-                {/* Input Placeholder */}
-                <div className="p-4 border-t border-gray-800">
-                    <input
-                        type="text"
-                        placeholder={selectedChannel ? `Message #${channels.find(c => c.id === selectedChannel)?.name}` : "Select a channel"}
-                        className={`w-full bg-gray-900 border border-gray-700 p-3 rounded text-white focus:outline-none focus:border-terminal-green ${!selectedChannel ? 'cursor-not-allowed opacity-50' : ''}`}
-                        disabled={!selectedChannel}
-                        onKeyDown={async (e) => {
-                            if (e.key === 'Enter' && selectedChannel && selectedGuild) {
-                                const input = e.currentTarget;
-                                const content = input.value.trim();
-                                if (!content) return;
-
-                                input.value = ''; // Clear immediately
-                                try {
-                                    await invoke<Message>('send_message', { guildId: selectedGuild, channelId: selectedChannel, content });
-                                    // Gateway will handle adding the message via MESSAGE_CREATE event
-                                } catch (err) {
-                                    setStatus(`Send Failed: ${err}`);
-                                    input.value = content; // Revert on failure
-                                }
-                            }
-                        }}
-                    />
-                </div>
-            </div>
+                </>
+            )}
         </div>
     );
 }

@@ -1,0 +1,77 @@
+    Checking p2cord v0.1.0 (D:\_B\p2cord\src-tauri)
+warning: unused import: `webrtc::track::track_local::TrackLocalWriter`
+ --> src\services\media\p2d\audio.rs:5:5
+  |
+5 | use webrtc::track::track_local::TrackLocalWriter; // Trait for write_sample
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `tokio::io::AsyncWriteExt`
+  --> src\services\media\p2d\mod.rs:71:21
+   |
+71 |                 use tokio::io::AsyncWriteExt; // For split sink if needed, but we use Tungstenite Message
+   |                     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Ordering`
+ --> src\services\state.rs:1:37
+  |
+1 | use std::sync::atomic::{AtomicBool, Ordering};
+  |                                     ^^^^^^^^
+
+warning: unused import: `models::*`
+  --> src\services\mod.rs:10:9
+   |
+10 | pub use models::*;
+   |         ^^^^^^^^^
+
+warning: unused import: `state::*`
+  --> src\services\mod.rs:11:9
+   |
+11 | pub use state::*;
+   |         ^^^^^^^^
+
+warning: unused import: `Emitter`
+  --> src\lib.rs:10:22
+   |
+10 | use tauri::{Manager, Emitter};
+   |                      ^^^^^^^
+
+warning: variable does not need to be mutable
+  --> src\services\media\p2d\audio.rs:33:9
+   |
+33 |     let mut encoder = OpusEncoder::new(
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `stream`
+  --> src\services\media\p2d\mod.rs:58:28
+   |
+58 |                         Ok(stream) => {
+   |                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_stream`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fetch_messages` is never used
+  --> src\services\social\mod.rs:60:14
+   |
+60 | pub async fn fetch_messages(client: &Client, channel_id: String, before_id: Option<String>) -> Result<Vec<SimpleMessage>, String> {
+   |              ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `id` is never read
+  --> src\services\models.rs:74:9
+   |
+73 | pub struct DiscordUser {
+   |            ----------- field in this struct
+74 |     pub id: String,
+   |         ^^
+   |
+   = note: `DiscordUser` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `p2cord` (lib) generated 10 warnings (run `cargo fix --lib -p p2cord` to apply 8 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.69s

@@ -5,5 +5,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    p2d_lib::run()
+    p2cord_lib::run()
 }

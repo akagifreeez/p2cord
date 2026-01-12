@@ -98,11 +98,11 @@ async fn connect_to_gateway(app: &AppHandle, token: &str) -> Result<(), String> 
                     0 => { // Dispatch
                         let t = v["t"].as_str().unwrap_or("");
                         if t == "MESSAGE_CREATE" {
-                             if let Ok(m) = serde_json::from_value::<crate::discord::SimpleMessage>(map_message(&v["d"])) {
+                             if let Ok(m) = serde_json::from_value::<crate::services::models::SimpleMessage>(map_message(&v["d"])) {
                                  // DBに保存
-                                 if let Some(db_state) = app.try_state::<crate::database::DatabaseState>() {
+                                 if let Some(db_state) = app.try_state::<crate::store::DatabaseState>() {
                                      if let Ok(conn) = db_state.conn.lock() {
-                                         let _ = crate::database::save_message(&conn, &m);
+                                         let _ = crate::store::save_message(&conn, &m);
                                      }
                                  }
                                  let _ = app.emit("message_create", m);

@@ -85,7 +85,7 @@ signaling-server/
 
 ---
 
-## Current Status (2026-01-12)
+## Current Status (2026-01-13)
 
 ### ✅ Completed
 *   **Full Mesh P2P Architecture**: Host/Viewer区別を廃止、対等なピア接続
@@ -97,12 +97,41 @@ signaling-server/
 *   **Unified RoomView UI**: ビデオグリッド、参加者リスト、チャット統合、接続品質表示
 *   **Settings Modal**: マイクデバイス選択、TURNサーバー設定、Adaptive Mode設定
 *   **Refactoring & Cleanup**: TypeScriptエラーの一括修正、不要ファイル（HostView.tsx等）の削除
+*   **Heartbeat & Reconnection (NEW 2026-01-13)**:
+    *   `Ping`メッセージによるハートビート（2秒間隔）
+    *   タイムアウト検知（6秒）でピア切断を検出
+    *   PeerConnection再作成による自動リカバリー
+    *   `leave_room`コマンドによる正常退室
+    *   音声トラックのPCサイクルごと再接続
+    *   自己Leaveメッセージのフィルタリング
+    *   デバウンスによる連続操作の制御
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
+*   画面共有機能
 
 ### ⚠️ Known Issues
 *   特になし
+
+---
+
+## Key P2D Architecture (Rust Backend)
+
+### services/media/p2d/
+| File           | Description                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `mod.rs`       | P2D初期化、再接続ループ、ハートビート、オーディオ管理          |
+| `session.rs`   | WebRTC PeerConnection管理、トラック設定                        |
+| `signaling.rs` | シグナリングメッセージ定義（Join/Leave/Offer/Answer/Ice/Ping） |
+| `audio.rs`     | Opusエンコード/デコード、cpalによる入出力                      |
+
+### services/media/mod.rs
+*   `join_conference`: P2Pセッション開始
+*   `leave_conference`: P2Pセッション終了
+
+### bridge/room.rs
+*   `join_room`: チャット履歴取得 + P2P開始
+*   `leave_room`: P2P終了
 
 ---
 
@@ -110,6 +139,7 @@ signaling-server/
 1.  **Context Loading**: セッション開始時にこのファイルを読むこと。
 2.  **Style Consistency**: Cyberpunk Glass テーマを維持（`glass-card`, `btn-primary`, `text-cyan-400`）。
 3.  **Code Safety**:
-    *   `useWebRTC.ts` 変更時は非同期処理とシグナリング状態に注意。
+    *   `p2d/mod.rs` 変更時は再接続ループとオーディオフラグの整合性に注意。
     *   Rust バックエンド変更時は `tauri dev` 再起動が必要。
 4.  **Documentation**: 大きな変更時はこのファイルを更新すること。
+
