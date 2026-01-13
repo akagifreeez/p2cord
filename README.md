@@ -1,128 +1,144 @@
-# P2D - Cyberpunk P2P Desktop Sharing
+# P2Cord - Lightweight Discord Alternative
 
 <p align="center">
-  <img src="public/p2d-icon.svg" width="120" height="120" alt="P2D Logo">
+  <img src="public/p2d-icon.svg" width="120" height="120" alt="P2Cord Logo">
   <br>
-  <strong>Tauri v2 + React + WebRTC による、モダンでセキュアな Full Mesh P2P デスクトップ共有ツール</strong>
+  <strong>Discord風UIを持つ、軽量P2Pボイスチャットアプリケーション</strong>
+  <br>
+  <em>Tauri v2 + React + WebRTC</em>
 </p>
 
-## ✨ 特徴
+## 概要
 
-P2D (Peer-to-Desktop) は、サーバーを経由せず（P2P）、低遅延で高画質な画面共有とボイスチャットを提供するアプリケーションです。
-SFチックな "Cyberpunk Glass/Neon" デザインを採用し、没入感のあるユーザー体験を提供します。
+P2Cord（ピーツーコード）は、Discordライクなモダンなインターフェースを持つ、軽量なP2Pボイスチャットアプリケーションです。
 
-- 🕸️ **Full Mesh P2P Architecture**
-  - 中央サーバー不要（シグナリングのみ）。参加者全員が互いに直接接続し、対等な関係で通信します。
-  - 複数人の画面を同時に共有・視聴可能（Multi-Stream Support）。
+**P2Cord** = P2P + Discord の略称で、中央サーバーに依存しない分散型のコミュニケーションを実現します。
 
-- 🖥️ **Ultra-Low Latency Screen Sharing**
-  - WebRTCによる低遅延配信。
-  - **Adaptive Bitrate Control**: ネットワーク品質（RTT/パケットロス）をリアルタイム監視し、画質を自動最適化します。
+## ✨ 主な機能
 
-- 🎙️ **Crystal Clear Voice Chat**
-  - 高品質な音声通話機能を内蔵。
-  - **Voice Activity Detection (VAD)**: 発話を検出し、アバターのハイライトやDataChannel通知を行います。
+### 🎙️ P2Pボイスチャット
+- **低遅延通話**: WebRTCによる直接P2P接続
+- **Opus音声コーデック**: 高品質な音声圧縮
+- **Voice Activity Detection**: 発話検出とUIフィードバック
+- **ハートビート & 自動再接続**: 接続断を検知し自動リカバリー
 
-- 🛡️ **Secure & Private**
-  - エンドツーエンド暗号化（WebRTC標準）。
-  - カスタム **TURNサーバー** 対応（NAT越えが必要な厳しいネットワーク環境でも接続可能）。
+### 💬 Discord連携
+- **サーバー/チャンネル表示**: Discordのサーバーとチャンネルを表示
+- **メッセージ履歴**: テキストチャンネルのメッセージ閲覧
+- **ボイスチャンネル参加**: ボイスチャンネルでP2P通話
 
-- 🎮 **Remote Control** (Beta)
-  - 相手の画面を自分のPCのように操作（マウス/キーボード）。
-  - DataChannel経由で入力を同期します。
-
-- 🎨 **Modern Cyberpunk UI**
-  - TailwindCSSによる洗練されたダークモード・ガラスモーフィズムデザイン。
-  - 直感的な操作が可能なユニファイドインターフェース。
+### 🎨 モダンUI
+- **Cyberpunk Glassテーマ**: ダークモード + グラスモーフィズム
+- **Discord風レイアウト**: サーバー/チャンネル/メッセージのパネル構成
+- **リアルタイム状態表示**: 接続状態、発話状態の可視化
 
 ## 🛠️ 技術スタック
 
-*   **Frontend**: React 18, TypeScript, Vite, TailwindCSS, Lucide Icons
-*   **Backend**: Tauri v2 (Rust), `arboard` (Clipboard), `enigo` (Input Simulation)
-*   **Communication**: WebRTC (RTCPeerConnection, RTCDataChannel), WebSocket (Signaling)
-*   **State Management**: Zustand
-*   **DevOps**: Docker (Signaling & TURN Server)
+| Layer         | Technology                              |
+| ------------- | --------------------------------------- |
+| **Frontend**  | React 18, TypeScript, Vite, TailwindCSS |
+| **Backend**   | Tauri v2 (Rust)                         |
+| **Audio**     | cpal, opus (Rust crates)                |
+| **P2P**       | webrtc-rs (Rust WebRTC implementation)  |
+| **Signaling** | Node.js WebSocket Server                |
+| **State**     | Zustand                                 |
 
-## 🚀 はじめ方 (Getting Started)
+## 📁 プロジェクト構造
+
+```
+p2cord/
+├── src/                    # React Frontend
+│   ├── App.tsx            # メインアプリケーション
+│   ├── components/        # UIコンポーネント
+│   │   └── VoiceLayout.tsx  # ボイスチャットUI
+│   └── stores/            # Zustand状態管理
+│       └── sessionStore.ts  # セッション状態
+│
+├── src-tauri/             # Rust Backend
+│   └── src/
+│       ├── services/
+│       │   ├── media/     # P2Pメディアサービス
+│       │   │   └── p2d/   # P2Dコアモジュール
+│       │   │       ├── mod.rs       # 初期化 & 再接続ループ
+│       │   │       ├── session.rs   # WebRTC PeerConnection
+│       │   │       ├── signaling.rs # シグナリングメッセージ
+│       │   │       └── audio.rs     # Opusエンコード/デコード
+│       │   └── social/    # Discord API連携
+│       └── bridge/        # Tauriコマンド
+│
+└── signaling-server/      # シグナリングサーバー
+    └── server.js          # WebSocket Server
+```
+
+## 🚀 セットアップ
 
 ### 前提条件
 
-*   **Node.js**: v18以上
-*   **Rust**: 最新安定版 (`rustup update` 推奨)
-*   **Build Tools**: 各プラットフォームのTauri依存関係（Windowsなら VS Build Tools with C++）
+- **Node.js** v18以上
+- **Rust** 最新安定版
+- **Windows**: Visual Studio Build Tools (C++)
 
-### インストール & 起動
-
-1. **リポジトリのクローン**
-   ```bash
-   git clone https://github.com/your-repo/P2D.git
-   cd P2D
-   ```
-
-2. **依存関係のインストール**
-   ```bash
-   # フロントエンド & Tauri
-   npm install
-
-   # シグナリングサーバー
-   cd signaling-server
-   npm install
-   cd ..
-   ```
-
-3. **ローカル開発サーバーの起動** (推奨)
-   シグナリングサーバーとTauriアプリを同時に起動します。
-   
-   ```bash
-   # ターミナル1: シグナリングサーバー
-   cd signaling-server
-   npm run dev
-   ```
-
-   ```bash
-   # ターミナル2: Tauriアプリ開発モード
-   npm run tauri dev
-   ```
-
-### 🐳 Dockerによるサーバーデプロイ (Optional)
-
-本番環境やLAN外からの接続用に、シグナリングサーバーとTURNサーバーをDockerで簡単に起動できます。
-設定の詳細などは [DOCKER.md](./DOCKER.md) を参照してください。
+### インストール
 
 ```bash
-# ビルド & 起動
-docker-compose up -d
+# リポジトリをクローン
+git clone https://github.com/your-repo/p2cord.git
+cd p2cord
 
-# ログ確認
-docker-compose logs -f
+# 依存関係をインストール
+npm install
+
+# シグナリングサーバーの依存関係
+cd signaling-server && npm install && cd ..
 ```
 
-## 📖 使い方
+### 開発サーバー起動
 
-### ルームの作成と参加
+```bash
+# ターミナル1: シグナリングサーバー
+node signaling-server/server.js
 
-従来の「ホスト/ゲスト」方式ではなく、**ルームコード** を共有するだけで誰とでもつながれます。
+# ターミナル2: Tauriアプリ
+npm run tauri dev
+```
 
-1. **ルーム作成**: ホーム画面で「Create Room」をクリックします。
-2. **コード共有**: 左上に表示される **6桁のルームコード** を相手に伝えます。
-3. **参加**: 相手はホーム画面で「Join Room」を選択し、コードを入力して参加します。
+## ⚙️ アーキテクチャ
 
-### 画面共有 & ボイスチャット
+### P2D (P2P Desktop) コアモジュール
 
-*   **画面共有**: 下部バーの **モニターアイコン** をクリックし、共有したいウィンドウや画面を選択します。
-*   **マイク**: **マイクアイコン** でON/OFFを切り替えます。
-*   **設定**: 右上の設定アイコンから、入力デバイスの変更やTURNサーバーの設定、Adaptive Bitrate機能のON/OFFが可能です。
+```
+┌─────────────────┐       WebSocket        ┌──────────────────┐
+│   Client A      │◄─────────────────────►│ Signaling Server │
+│  (p2d/mod.rs)   │                        └──────────────────┘
+└────────┬────────┘                                 ▲
+         │                                          │
+    WebRTC (P2P)                                    │
+         │                                          │
+         ▼                                          │
+┌─────────────────┐       WebSocket        ┌───────┴──────────┐
+│   Client B      │◄─────────────────────►│                   │
+│  (p2d/mod.rs)   │                        └───────────────────┘
+└─────────────────┘
+```
 
-## ⚙️ 設定 (Advanced)
+### シグナリングメッセージ
 
-*   **TURN Server**: 企業内ネットワークや厳しいNAT環境下で接続できない場合、独自または公開TURNサーバーを設定に追加できます。
-*   **Adaptive Bitrate Mode**: デフォルトで有効。不安定な回線での画質崩壊を防ぎます。
+| Message        | Description             |
+| -------------- | ----------------------- |
+| `Join`         | ルーム参加通知          |
+| `Welcome`      | 参加者への応答          |
+| `Leave`        | ルーム退出通知          |
+| `Offer`        | WebRTC SDP Offer        |
+| `Answer`       | WebRTC SDP Answer       |
+| `IceCandidate` | ICE候補交換             |
+| `Ping`         | ハートビート（2秒間隔） |
 
-## 🤝 Contributing
+### ハートビート & 再接続
 
-Pull Request は大歓迎です！
-バグ報告や機能要望は Issue までお願いします。
+- **Ping送信**: 2秒間隔
+- **タイムアウト検知**: 6秒間Pingがなければ切断と判定
+- **自動リカバリー**: PeerConnectionを再作成して再接続
 
-## 📜 License
+## 📜 ライセンス
 
 MIT License
