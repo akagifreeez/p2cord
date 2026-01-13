@@ -1,128 +1,100 @@
-# P2D - Cyberpunk P2P Desktop Sharing
+# P2Cord (with P2D Core)
 
-<p align="center">
-  <img src="public/p2d-icon.svg" width="120" height="120" alt="P2D Logo">
-  <br>
-  <strong>Tauri v2 + React + WebRTC による、モダンでセキュアな Full Mesh P2P デスクトップ共有ツール</strong>
-</p>
+**P2Cord** is a lightweight, custom Discord client built with **Tauri v2** (Rust) and **React**. It features a unique **Peer-to-Peer (P2P) Voice Chat** architecture that bypasses Discord's voice servers, offering a decentralized audio experience while maintaining standard text chat compatibility.
 
-## ✨ 特徴
+> **Note:** This project is in active development. The current implementation prioritizes a Discord-like UI ("P2Cord") powered by the underlying "P2D" (Peer-to-Desktop) core technologies.
 
-P2D (Peer-to-Desktop) は、サーバーを経由せず（P2P）、低遅延で高画質な画面共有とボイスチャットを提供するアプリケーションです。
-SFチックな "Cyberpunk Glass/Neon" デザインを採用し、没入感のあるユーザー体験を提供します。
+## 🚀 Features
 
-- 🕸️ **Full Mesh P2P Architecture**
-  - 中央サーバー不要（シグナリングのみ）。参加者全員が互いに直接接続し、対等な関係で通信します。
-  - 複数人の画面を同時に共有・視聴可能（Multi-Stream Support）。
+*   **Discord Integration**:
+    *   View Servers (Guilds) and Channels.
+    *   Read and Send Text Messages (supports Embeds and Attachments).
+    *   Search Message History (Local Cache + API Fallback).
+*   **P2P Voice Chat (P2D Core)**:
+    *   **Full Mesh Architecture**: Direct P2P connections between users in a voice channel.
+    *   **Rust-Native Audio**: Low-latency audio processing using `cpal` and `audiopus` (Opus codec) running in the Rust backend.
+    *   **Custom Signaling**: Uses a local or hosted WebSocket signaling server for P2P negotiation.
+    *   **Voice Activity Detection (VAD)**: Native VAD implementation.
+*   **Privacy & Performance**:
+    *   Lightweight resource usage compared to the official Electron client.
+    *   Voice data flows directly between peers, not through Discord's voice infrastructure.
 
-- 🖥️ **Ultra-Low Latency Screen Sharing**
-  - WebRTCによる低遅延配信。
-  - **Adaptive Bitrate Control**: ネットワーク品質（RTT/パケットロス）をリアルタイム監視し、画質を自動最適化します。
+## 🛠 Tech Stack
 
-- 🎙️ **Crystal Clear Voice Chat**
-  - 高品質な音声通話機能を内蔵。
-  - **Voice Activity Detection (VAD)**: 発話を検出し、アバターのハイライトやDataChannel通知を行います。
+*   **Frontend**: React 18, TypeScript, TailwindCSS, Zustand.
+*   **Backend (Tauri)**: Rust.
+    *   `webrtc`: Networking and P2P negotiation.
+    *   `cpal`: Audio Input/Output.
+    *   `audiopus`: Opus audio encoding/decoding.
+    *   `rusqlite`: Local message caching.
+*   **Signaling**: Node.js (WebSocket).
 
-- 🛡️ **Secure & Private**
-  - エンドツーエンド暗号化（WebRTC標準）。
-  - カスタム **TURNサーバー** 対応（NAT越えが必要な厳しいネットワーク環境でも接続可能）。
+## 🏗 Architecture Overview
 
-- 🎮 **Remote Control** (Beta)
-  - 相手の画面を自分のPCのように操作（マウス/キーボード）。
-  - DataChannel経由で入力を同期します。
+The application operates in a hybrid mode:
 
-- 🎨 **Modern Cyberpunk UI**
-  - TailwindCSSによる洗練されたダークモード・ガラスモーフィズムデザイン。
-  - 直感的な操作が可能なユニファイドインターフェース。
+1.  **Text & Guilds**: The Rust backend communicates with the **Discord API** (HTTPS) to fetch guilds, channels, and messages.
+2.  **Voice**: When joining a Voice Channel, the Rust backend (`services/media`) initiates a **P2P Session**:
+    *   Connects to the **Signaling Server** (`ws://localhost:8080` by default).
+    *   Negotiates WebRTC connections with other peers in the same channel.
+    *   Exchanges audio packets directly.
 
-## 🛠️ 技術スタック
+## 📦 Prerequisites
 
-*   **Frontend**: React 18, TypeScript, Vite, TailwindCSS, Lucide Icons
-*   **Backend**: Tauri v2 (Rust), `arboard` (Clipboard), `enigo` (Input Simulation)
-*   **Communication**: WebRTC (RTCPeerConnection, RTCDataChannel), WebSocket (Signaling)
-*   **State Management**: Zustand
-*   **DevOps**: Docker (Signaling & TURN Server)
+*   **Node.js** (v18+) & npm/pnpm/bun
+*   **Rust** (latest stable) & Cargo
+*   **System Dependencies** (Linux only):
+    *   `libwebkit2gtk-4.0-dev`, `build-essential`, `curl`, `wget`, `file`, `libssl-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev` (Standard Tauri deps).
+    *   `libasound2-dev` (ALSA for audio).
 
-## 🚀 はじめ方 (Getting Started)
+## ⚡ Getting Started
 
-### 前提条件
-
-*   **Node.js**: v18以上
-*   **Rust**: 最新安定版 (`rustup update` 推奨)
-*   **Build Tools**: 各プラットフォームのTauri依存関係（Windowsなら VS Build Tools with C++）
-
-### インストール & 起動
-
-1. **リポジトリのクローン**
-   ```bash
-   git clone https://github.com/your-repo/P2D.git
-   cd P2D
-   ```
-
-2. **依存関係のインストール**
-   ```bash
-   # フロントエンド & Tauri
-   npm install
-
-   # シグナリングサーバー
-   cd signaling-server
-   npm install
-   cd ..
-   ```
-
-3. **ローカル開発サーバーの起動** (推奨)
-   シグナリングサーバーとTauriアプリを同時に起動します。
-   
-   ```bash
-   # ターミナル1: シグナリングサーバー
-   cd signaling-server
-   npm run dev
-   ```
-
-   ```bash
-   # ターミナル2: Tauriアプリ開発モード
-   npm run tauri dev
-   ```
-
-### 🐳 Dockerによるサーバーデプロイ (Optional)
-
-本番環境やLAN外からの接続用に、シグナリングサーバーとTURNサーバーをDockerで簡単に起動できます。
-設定の詳細などは [DOCKER.md](./DOCKER.md) を参照してください。
+### 1. Start the Signaling Server
+The P2P voice functionality requires the signaling server to be running.
 
 ```bash
-# ビルド & 起動
-docker-compose up -d
-
-# ログ確認
-docker-compose logs -f
+cd signaling-server
+npm install
+npm run dev
+# Server will start on ws://localhost:8080
 ```
 
-## 📖 使い方
+### 2. Run the Desktop App (P2Cord)
+In a new terminal window, start the Tauri application:
 
-### ルームの作成と参加
+```bash
+npm install
+npm run tauri dev
+```
 
-従来の「ホスト/ゲスト」方式ではなく、**ルームコード** を共有するだけで誰とでもつながれます。
+### 3. Usage
+1.  **Login**: Upon launch, enter your **Discord User Token**.
+    *   *Note: This is a self-bot client. Automating user accounts is against Discord TOS. Use at your own risk for educational/research purposes.*
+2.  **Navigate**: Click servers on the left sidebar to view channels.
+3.  **Voice Chat**: Click a **Voice Channel** to join.
+    *   The app will connect to the local signaling server and establish P2P connections with other P2Cord users in the same channel.
+    *   *Note: You can only hear/speak with other users running P2Cord. Standard Discord users will see you in the channel (via API) but audio will not flow to them.*
+4.  **Text Chat**: Click a Text Channel to view and send messages.
 
-1. **ルーム作成**: ホーム画面で「Create Room」をクリックします。
-2. **コード共有**: 左上に表示される **6桁のルームコード** を相手に伝えます。
-3. **参加**: 相手はホーム画面で「Join Room」を選択し、コードを入力して参加します。
+## 📂 Project Structure
 
-### 画面共有 & ボイスチャット
+*   `src/`: React Frontend (UI, State Management).
+    *   `App.tsx`: Main entry point and layout (Discord UI).
+    *   `components/`: UI components (VoiceLayout, ChatPanel).
+    *   `stores/`: Zustand stores (Session, Connection).
+*   `src-tauri/`: Rust Backend.
+    *   `src/bridge/`: Commands exposed to Frontend (`room.rs`, `social.rs`, `media.rs`).
+    *   `src/services/media/p2d/`: **Core P2P Logic** (Audio, Signaling, WebRTC Session).
+    *   `src/services/social/`: Discord API Client.
+*   `signaling-server/`: Node.js WebSocket server for P2P discovery.
 
-*   **画面共有**: 下部バーの **モニターアイコン** をクリックし、共有したいウィンドウや画面を選択します。
-*   **マイク**: **マイクアイコン** でON/OFFを切り替えます。
-*   **設定**: 右上の設定アイコンから、入力デバイスの変更やTURNサーバーの設定、Adaptive Bitrate機能のON/OFFが可能です。
+## 📝 Configuration
 
-## ⚙️ 設定 (Advanced)
+*   **Audio Devices**: Managed automatically by the OS default or backend selection logic.
+*   **Signaling URL**: Hardcoded to `ws://localhost:8080` in `src-tauri/src/services/media/p2d/signaling.rs`. Modify this file to point to a remote signaling server.
 
-*   **TURN Server**: 企業内ネットワークや厳しいNAT環境下で接続できない場合、独自または公開TURNサーバーを設定に追加できます。
-*   **Adaptive Bitrate Mode**: デフォルトで有効。不安定な回線での画質崩壊を防ぎます。
+## ⚠️ Known Issues / Notes
 
-## 🤝 Contributing
+*   **Frontend WebRTC**: The codebase contains a `src/hooks/useWebRTC.ts` and `RoomView.tsx` which implement a browser-based Full Mesh P2P system. This is currently **experimental/secondary** and not the primary voice engine used in the main `App.tsx` flow.
+*   **Self-Botting**: As mentioned, using a user token in a third-party client may violate Discord's Terms of Service.
 
-Pull Request は大歓迎です！
-バグ報告や機能要望は Issue までお願いします。
-
-## 📜 License
-
-MIT License
