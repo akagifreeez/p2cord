@@ -51,6 +51,9 @@ pub fn run() {
             bridge::social::send_message,
             bridge::social::fetch_all_history,
             bridge::social::search_discord_api,
+            bridge::social::get_archived_threads,
+            bridge::social::get_forum_active_threads,
+            
             // Gateway (moved to bridge as it is a controller)
             bridge::gateway::start_gateway,
             

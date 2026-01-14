@@ -34,15 +34,16 @@ impl DatabaseState {
             "
         ).map_err(|e| e.to_string())?;
         
-        // 既存DBのマイグレーション: guild_id カラムが存在しない場合に追加
-        // エラーは無視（既にカラムが存在する場合）
+        // 既存DBのマイグレーション: guild_id, author_id カラムが存在しない場合に追加
         let _ = conn.execute("ALTER TABLE messages ADD COLUMN guild_id TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN author_id TEXT NOT NULL DEFAULT ''", []);
         
         // インデックス作成 (マイグレーション後に実行)
         conn.execute_batch(
             "
             CREATE INDEX IF NOT EXISTS idx_channel ON messages(channel_id);
             CREATE INDEX IF NOT EXISTS idx_guild ON messages(guild_id);
+            CREATE INDEX IF NOT EXISTS idx_author ON messages(author_id);
             CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(channel_id, timestamp DESC);
             "
         ).map_err(|e| e.to_string())?;
@@ -78,14 +79,15 @@ pub fn save_message(conn: &Connection, msg: &SimpleMessage) -> Result<(), String
     let attachments_json = serde_json::to_string(&msg.attachments).unwrap_or_default();
 
     conn.execute(
-        "INSERT OR REPLACE INTO messages (id, guild_id, channel_id, content, author, timestamp, embeds, attachments, attachment_filenames)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT OR REPLACE INTO messages (id, guild_id, channel_id, content, author, author_id, timestamp, embeds, attachments, attachment_filenames)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             msg.id,
             msg.guild_id,
             msg.channel_id,
             msg.content,
             msg.author,
+            msg.author_id,
             msg.timestamp,
             embeds_json,
             attachments_json,
@@ -130,8 +132,8 @@ pub fn get_cached_messages(
 
     // before_idがある場合とない場合で別々にクエリ実行
     if let Some(before) = &before_id {
-        let mut stmt = conn.prepare(
-            "SELECT id, guild_id, channel_id, content, author, timestamp, embeds, attachments 
+            let mut stmt = conn.prepare(
+            "SELECT id, guild_id, channel_id, content, author, author_id, timestamp, embeds, attachments 
              FROM messages 
              WHERE channel_id = ?1 AND timestamp < (SELECT timestamp FROM messages WHERE id = ?2)
              ORDER BY timestamp DESC LIMIT ?3"
@@ -144,20 +146,22 @@ pub fn get_cached_messages(
             let ch_id: String = row.get(2).map_err(|e| e.to_string())?;
             let content: String = row.get(3).map_err(|e| e.to_string())?;
             let author: String = row.get(4).map_err(|e| e.to_string())?;
-            let timestamp: String = row.get(5).map_err(|e| e.to_string())?;
-            let embeds_json: String = row.get(6).map_err(|e| e.to_string())?;
-            let attachments_json: String = row.get(7).map_err(|e| e.to_string())?;
+            // Handle older DBs where author_id might be missing/null (though migration adds it) where default is empty
+            let author_id: String = row.get(5).unwrap_or_default(); 
+            let timestamp: String = row.get(6).map_err(|e| e.to_string())?;
+            let embeds_json: String = row.get(7).map_err(|e| e.to_string())?;
+            let attachments_json: String = row.get(8).map_err(|e| e.to_string())?;
             
             let embeds: Vec<DiscordEmbed> = serde_json::from_str(&embeds_json).unwrap_or_default();
             let attachments: Vec<DiscordAttachment> = serde_json::from_str(&attachments_json).unwrap_or_default();
             
             messages.push(SimpleMessage {
-                id, guild_id: g_id, channel_id: ch_id, content, author, timestamp, embeds, attachments,
+                id, guild_id: g_id, channel_id: ch_id, content, author, author_id, timestamp, embeds, attachments,
             });
         }
     } else {
         let mut stmt = conn.prepare(
-            "SELECT id, guild_id, channel_id, content, author, timestamp, embeds, attachments 
+            "SELECT id, guild_id, channel_id, content, author, author_id, timestamp, embeds, attachments 
              FROM messages 
              WHERE channel_id = ?1
              ORDER BY timestamp DESC LIMIT ?2"
@@ -170,15 +174,16 @@ pub fn get_cached_messages(
             let ch_id: String = row.get(2).map_err(|e| e.to_string())?;
             let content: String = row.get(3).map_err(|e| e.to_string())?;
             let author: String = row.get(4).map_err(|e| e.to_string())?;
-            let timestamp: String = row.get(5).map_err(|e| e.to_string())?;
-            let embeds_json: String = row.get(6).map_err(|e| e.to_string())?;
-            let attachments_json: String = row.get(7).map_err(|e| e.to_string())?;
+            let author_id: String = row.get(5).unwrap_or_default();
+            let timestamp: String = row.get(6).map_err(|e| e.to_string())?;
+            let embeds_json: String = row.get(7).map_err(|e| e.to_string())?;
+            let attachments_json: String = row.get(8).map_err(|e| e.to_string())?;
             
             let embeds: Vec<DiscordEmbed> = serde_json::from_str(&embeds_json).unwrap_or_default();
             let attachments: Vec<DiscordAttachment> = serde_json::from_str(&attachments_json).unwrap_or_default();
             
             messages.push(SimpleMessage {
-                id, guild_id: g_id, channel_id: ch_id, content, author, timestamp, embeds, attachments,
+                id, guild_id: g_id, channel_id: ch_id, content, author, author_id, timestamp, embeds, attachments,
             });
         }
     }
@@ -197,7 +202,7 @@ pub fn search_messages(
 
     // FTSで検索し、guild_idでフィルタ (サーバー全体)
     let sql = "
-        SELECT m.id, m.guild_id, m.channel_id, m.content, m.author, m.timestamp, m.embeds, m.attachments
+        SELECT m.id, m.guild_id, m.channel_id, m.content, m.author, m.author_id, m.timestamp, m.embeds, m.attachments
         FROM messages_fts fts
         JOIN messages m ON fts.id = m.id
         WHERE messages_fts MATCH ?1 AND m.guild_id = ?2
@@ -217,9 +222,10 @@ pub fn search_messages(
         let ch_id: String = row.get(2).map_err(|e| e.to_string())?;
         let content: String = row.get(3).map_err(|e| e.to_string())?;
         let author: String = row.get(4).map_err(|e| e.to_string())?;
-        let timestamp: String = row.get(5).map_err(|e| e.to_string())?;
-        let embeds_json: String = row.get(6).map_err(|e| e.to_string())?;
-        let attachments_json: String = row.get(7).map_err(|e| e.to_string())?;
+        let author_id: String = row.get(5).unwrap_or_default();
+        let timestamp: String = row.get(6).map_err(|e| e.to_string())?;
+        let embeds_json: String = row.get(7).map_err(|e| e.to_string())?;
+        let attachments_json: String = row.get(8).map_err(|e| e.to_string())?;
 
         let embeds: Vec<DiscordEmbed> = serde_json::from_str(&embeds_json).unwrap_or_default();
         let attachments: Vec<DiscordAttachment> = serde_json::from_str(&attachments_json).unwrap_or_default();
@@ -230,6 +236,7 @@ pub fn search_messages(
             channel_id: ch_id,
             content,
             author,
+            author_id,
             timestamp,
             embeds,
             attachments,

@@ -1,5 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useSessionStore } from '../stores/sessionStore';
+import { ChannelChat, Message } from './ChannelChat';
+import { useState, useRef } from 'react';
+
+interface VoiceLayoutProps {
+    messages?: Message[];
+    onSendMessage?: (text: string) => void;
+    myId?: string | null;
+
+    // Scroll & Pagination
+    isLoadingMore?: boolean;
+    showScrollButton?: boolean;
+    onLoadMore?: () => void;
+    onScrollToBottom?: () => void;
+    onMessagesScroll?: (e: React.UIEvent<HTMLDivElement>) => void;
+    messagesContainerRef?: React.RefObject<HTMLDivElement>;
+    messagesEndRef?: React.RefObject<HTMLDivElement>;
+}
 
 // Reusing VideoGridItem design (adapted for Avatar-only for now)
 function GridItem({
@@ -50,20 +67,30 @@ function GridItem({
     );
 }
 
-export function VoiceLayout() {
+export function VoiceLayout({
+    messages = [],
+    onSendMessage = () => { },
+    myId = null,
+    isLoadingMore = false,
+    showScrollButton = false,
+    onLoadMore = () => { },
+    onScrollToBottom = () => { },
+    onMessagesScroll = () => { },
+    messagesContainerRef,
+    messagesEndRef
+}: VoiceLayoutProps) {
     const {
         connectedVoiceChannelId,
         remoteSpeakers,
         connectedPeers,
-        isMicEnabled,
         isMuted,
         isScreenSharing,
         localSpeaking,
         setMediaStatus,
         setConnectedVoiceChannel,
+        isConnected, // Correct property name
         setConnectionStatus,
         clearPeers,
-        setLocalSpeaking,
     } = useSessionStore();
 
     // Get transitioning state from store
@@ -150,25 +177,55 @@ export function VoiceLayout() {
                 </div>
             </div>
 
-            {/* Grid */}
-            <div className="flex-1 p-6 overflow-y-auto custom-scrollbar z-10">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 auto-rows-fr">
-                    {participants.map(p => {
-                        // Determine speaking state
-                        const isSpeaking = p.isLocal
-                            ? localSpeaking
-                            : remoteSpeakers[p.id] || false;
+            {/* Grid & Chat Split View */}
+            <div className="flex-1 flex overflow-hidden z-10 relative">
+                {/* Voice Grid (Left) */}
+                <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr">
+                        {participants.map(p => {
+                            // Determine speaking state
+                            const isSpeaking = p.isLocal
+                                ? localSpeaking
+                                : remoteSpeakers[p.id] || false;
 
-                        return (
-                            <GridItem
-                                key={p.id}
-                                clientId={p.id}
-                                label={p.name}
-                                isLocal={p.isLocal}
-                                isSpeaking={isSpeaking}
-                            />
-                        );
-                    })}
+                            return (
+                                <GridItem
+                                    key={p.id}
+                                    clientId={p.id}
+                                    label={p.name}
+                                    isLocal={p.isLocal}
+                                    isSpeaking={isSpeaking}
+                                />
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Chat Panel (Right) - Reusing ChannelChat */}
+                <div className="w-96 border-l border-white/10 bg-black/40 flex flex-col">
+                    <ChannelChat
+                        status={isConnected ? "Connected" : "Disconnected"}
+                        selectedChannel={connectedVoiceChannelId}
+                        channelName="Voice Chat"
+                        channels={[]} // Not needed contextually for voice chat list
+                        messages={messages}
+                        searchResults={null}
+                        searchQuery=""
+                        isSearching={false}
+                        isLoadingChannel={false}
+                        isLoadingMore={isLoadingMore}
+                        showScrollButton={showScrollButton}
+
+                        setSearchQuery={() => { }}
+                        handleSearch={() => { }}
+                        clearSearch={() => { }}
+                        handleSendMessage={onSendMessage}
+                        scrollToBottom={onScrollToBottom}
+                        handleMessagesScroll={onMessagesScroll}
+
+                        messagesContainerRef={messagesContainerRef as any}
+                        messagesEndRef={messagesEndRef as any}
+                    />
                 </div>
             </div>
 

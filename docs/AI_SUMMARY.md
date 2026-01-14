@@ -85,7 +85,7 @@ signaling-server/
 
 ---
 
-## Current Status (2026-01-13)
+## Current Status (2026-01-14)
 
 ### ✅ Completed
 *   **Full Mesh P2P Architecture**: Host/Viewer区別を廃止、対等なピア接続
@@ -93,18 +93,18 @@ signaling-server/
 *   **Microphone Support**: マイクON/OFF、ミュート、デバイス選択
 *   **Voice Activity Detection (VAD)**: 発話検出でアバターがハイライト、DataChannel経由でリモート共有
 *   **TURN Server Configuration**: 設定画面でTURN URL/Username/Credentialを指定可能（localStorage永続化）
-*   **Adaptive Bitrate Control**: 接続品質（RTT/パケットロス）に応じてビットレート自動調整、TURN検出時は帯域制限
 *   **Unified RoomView UI**: ビデオグリッド、参加者リスト、チャット統合、接続品質表示
-*   **Settings Modal**: マイクデバイス選択、TURNサーバー設定、Adaptive Mode設定
-*   **Refactoring & Cleanup**: TypeScriptエラーの一括修正、不要ファイル（HostView.tsx等）の削除
-*   **Heartbeat & Reconnection (NEW 2026-01-13)**:
-    *   `Ping`メッセージによるハートビート（2秒間隔）
-    *   タイムアウト検知（6秒）でピア切断を検出
-    *   PeerConnection再作成による自動リカバリー
-    *   `leave_room`コマンドによる正常退室
-    *   音声トラックのPCサイクルごと再接続
-    *   自己Leaveメッセージのフィルタリング
-    *   デバウンスによる連続操作の制御
+*   **Refactoring & Cleanup**: TypeScriptエラーの一括修正、不要ファイルの削除
+*   **Heartbeat & Reconnection**: `Ping`メッセージによるハートビート、自動リカバリー、`leave_room`実装
+*   **Discord Integration Update (2026-01-14)**:
+    *   **Forum & Thread Support**: フォーラム、アーカーブスレッド、アクティブスレッドの取得・表示対応
+    *   **Search API Fallback**: アクティブスレッド取得時のBot権限回避策としてSearch APIを使用
+    *   **Thread/Channel Sorting**: `last_message_id` による最新更新順ソートと5日以内フィルタリング
+*   **Voice Chat UI Overhaul (2026-01-14)**:
+    *   **Integrated ChannelChat**: `ChatPanel` を廃止し、`ChannelChat` 共通コンポーネントを作成
+    *   **Split Layout**: ボイスチャット画面をビデオグリッドとチャットの左右分割レイアウトに変更
+    *   **Message Sync Fix**: ボイスチャンネル参加時のメッセージ履歴読み込みバグ修正
+    *   **Rich Content & Scrolling**: 画像・Embed表示対応、上スクロールによる過去ログ読み込み(Pagination)対応
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
@@ -119,7 +119,7 @@ signaling-server/
 
 ### services/media/p2d/
 | File           | Description                                                    |
-| -------------- | -------------------------------------------------------------- |
+| :------------- | :------------------------------------------------------------- |
 | `mod.rs`       | P2D初期化、再接続ループ、ハートビート、オーディオ管理          |
 | `session.rs`   | WebRTC PeerConnection管理、トラック設定                        |
 | `signaling.rs` | シグナリングメッセージ定義（Join/Leave/Offer/Answer/Ice/Ping） |

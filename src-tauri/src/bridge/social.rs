@@ -21,7 +21,35 @@ pub async fn get_channels(guild_id: String, state: State<'_, DiscordState>) -> R
         c.as_ref().cloned().ok_or("Client not initialized")?
     };
 
-    social::fetch_channels(&client, guild_id).await
+    let mut channels = social::fetch_channels(&client, guild_id.clone()).await?;
+    
+    // Fetch active threads (ignore error to keep channels working if threads fail)
+    match social::fetch_active_threads(&client, guild_id).await {
+        Ok(threads) => channels.extend(threads),
+        Err(e) => println!("Failed to fetch active threads: {}", e),
+    }
+
+    Ok(channels)
+}
+
+#[tauri::command]
+pub async fn get_archived_threads(channel_id: String, state: State<'_, DiscordState>) -> Result<Vec<SimpleChannel>, String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::fetch_archived_threads(&client, channel_id).await
+}
+
+#[tauri::command]
+pub async fn get_forum_active_threads(guild_id: String, channel_id: String, state: State<'_, DiscordState>) -> Result<Vec<SimpleChannel>, String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::fetch_forum_active_threads(&client, guild_id, channel_id).await
 }
 
 #[tauri::command]

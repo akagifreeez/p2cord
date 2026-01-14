@@ -3,6 +3,7 @@ import { useSessionStore } from './stores/sessionStore';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { VoiceLayout } from './components/VoiceLayout';
+import { ChannelChat } from './components/ChannelChat';
 
 interface Guild {
     id: string;
@@ -15,6 +16,7 @@ interface Channel {
     name: string;
     kind: string;
     parent_id?: string;
+    last_message_id?: string;
 }
 
 interface Embed {
@@ -42,6 +44,7 @@ interface Message {
     channel_id: string;
     content: string;
     author: string;
+    author_id?: string;
     timestamp: string;
     embeds: Embed[];
     attachments: Attachment[];
@@ -49,7 +52,7 @@ interface Message {
 
 interface SimpleMessage {
     id: string;
-    author_id: string;
+    author_id: string; // From backend (author.id)
     author_name: string;
     author_avatar: string;
     content: string;
@@ -61,6 +64,7 @@ function App() {
     const [token, setToken] = useState('');
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [status, setStatus] = useState('');
+    const [myId, setMyId] = useState<string | null>(null); // Logged-in User ID
 
     const [guilds, setGuilds] = useState<Guild[]>([]);
     // Use global store
@@ -102,7 +106,7 @@ function App() {
 
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoadingChannel, setIsLoadingChannel] = useState(false);
-    const [isSwitchingChannel, setIsSwitchingChannel] = useState(false); // チャンネル切り替え中のオーバーレイ制御
+    // const [isSwitchingChannel, setIsSwitchingChannel] = useState(false); // Removed masking logic
     const fetchIdRef = useRef(0); // フェッチバージョン管理用
 
     // Audio State
@@ -214,8 +218,10 @@ function App() {
 
     const handleLoginWithToken = async (tokenToUse: string) => {
         try {
-            const res = await invoke<string>('init_client', { token: tokenToUse });
-            setStatus(res);
+            // Updated to expect LoginResponse object
+            const res = await invoke<{ message: string, user_id: string, username: string }>('init_client', { token: tokenToUse });
+            setStatus(res.message);
+            setMyId(res.user_id);
             setIsLoggedIn(true);
             localStorage.setItem('discord_token', tokenToUse); // Save on success
             fetchGuilds();
@@ -284,6 +290,8 @@ function App() {
 
         // Find channel type
         const targetChannel = channels.find(c => c.id === channelId);
+        console.log("fetchMessages called for:", channelId, "Found Channel:", targetChannel);
+
         const isVoice = targetChannel?.kind === 'Voice' || targetChannel?.kind === 'voice';
 
         if (!beforeId) {
@@ -327,11 +335,59 @@ function App() {
                     // Allow next operation after delay
                     setTimeout(() => setVoiceTransitioning(false), 1000);
                 }
-                return; // Stop here for Voice
+
+                // VOICE CHAT: Fetch messages for the voice channel (independent of P2P connection)
+                setIsLoadingChannel(true);
+
+                // 1. Cache
+                try {
+                    const cachedMsgs = await invoke<Message[]>('get_cached_messages', { channelId, limit: 50 });
+                    if (currentFetchId === fetchIdRef.current) { // Ensure we are still on the target channel
+                        if (cachedMsgs.length > 0) {
+                            setMessages(cachedMsgs.reverse());
+                            setIsLoadingChannel(false);
+                        }
+                    }
+                } catch { }
+
+                // 2. API Fetch
+                try {
+                    const fetchedMsgs = await invoke<SimpleMessage[]>('fetch_messages', {
+                        guildId: selectedGuild,
+                        channelId: channelId,
+                    });
+
+                    const mapped: Message[] = fetchedMsgs.map(m => ({
+                        id: m.id,
+                        content: m.content,
+                        author: m.author_name,
+                        author_id: m.author_id, // Ensure author_id is passed
+                        timestamp: m.timestamp,
+                        guild_id: selectedGuild!,
+                        channel_id: channelId,
+                        embeds: [],
+                        attachments: m.attachments ? JSON.parse(m.attachments) : [],
+                    }));
+
+                    if (currentFetchId === fetchIdRef.current) {
+                        setMessages(prev => { // prev unused warning might persist if not used, but setMessages expects a function or value
+                            // If we have cache, merge? For now just overwrite or simple strategy
+                            return mapped.reverse();
+                        });
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch voice text messages:", e);
+                } finally {
+                    if (currentFetchId === fetchIdRef.current) {
+                        setIsLoadingChannel(false);
+                    }
+                }
+
+                return; // Stop here for Voice (Text flow below is skipped)
             }
 
             // TEXT: Only fetch messages, DO NOT touch P2P
-            setIsSwitchingChannel(true);
+            // setIsSwitchingChannel(true);
             setMessages([]);
             setIsLoadingChannel(true);
 
@@ -351,11 +407,13 @@ function App() {
         if (!isVoice) {
             // 2. API Fetch (Text Only)
             try {
+                console.log("[App] Invoking fetch_messages for:", selectedGuild, channelId);
                 // Use new `fetch_messages` command
                 const fetchedMsgs = await invoke<SimpleMessage[]>('fetch_messages', {
                     guildId: selectedGuild,
                     channelId: channelId,
                 });
+                console.log("[App] fetch_messages success, items:", fetchedMsgs.length);
 
                 // Mapping SimpleMessage -> Message
                 const mapped: Message[] = fetchedMsgs.map(m => ({
@@ -369,7 +427,10 @@ function App() {
                     attachments: m.attachments ? JSON.parse(m.attachments) : [],
                 }));
 
-                if (currentFetchId !== fetchIdRef.current) return;
+                if (currentFetchId !== fetchIdRef.current) {
+                    console.log("[App] Fetch ID mismatch, ignoring result");
+                    return;
+                }
 
                 setMessages(prev => {
                     if (beforeId) return [...prev, ...mapped.reverse()]; // Load more (top)
@@ -377,35 +438,62 @@ function App() {
                 });
 
             } catch (e) {
+                console.error("[App] fetch_messages failed:", e);
                 if (currentFetchId === fetchIdRef.current) {
                     setStatus(`Fetch Error: ${e}`);
                 }
             } finally {
                 if (currentFetchId === fetchIdRef.current) {
                     setIsLoadingChannel(false);
-                    requestAnimationFrame(() => setIsSwitchingChannel(false));
+                    // requestAnimationFrame(() => setIsSwitchingChannel(false));
                 }
+            }
+        }
+
+        // FORUM: Fetch archived threads AND active threads (via posts/messages) to populate the list
+        if (targetChannel?.kind === 'Forum') {
+            try {
+                // 1. Fetch Archived
+                const archived = await invoke<Channel[]>('get_archived_threads', { channelId });
+
+                // 2. Fetch Active (via Search API)
+                // Note: user tokens can't use `active threads` endpoint, so we use Search API to find threads.
+                // Requires guildId as well.
+                const active = await invoke<Channel[]>('get_forum_active_threads', { guildId: selectedGuild, channelId });
+
+                setChannels(prev => {
+                    const existingIds = new Set(prev.map(c => c.id));
+                    const combined = [...archived, ...active];
+                    // No global filtering here. We want to store ALL threads.
+                    // Filtering for "Recency" will be done at the rendering level for Sidebar only.
+
+                    const newThreads = combined.filter(t => !existingIds.has(t.id));
+                    if (newThreads.length === 0) return prev;
+                    // Just append new threads without re-sorting the entire list
+                    return [...prev, ...newThreads];
+                });
+            } catch (e) {
+                console.error("Failed to fetch forum threads:", e);
             }
         }
     };
 
-    // 同期的スクロールとマスク解除制御
+    // 同期的スクロールとマスク解除制御 (Removed Masking)
     useLayoutEffect(() => {
-        if (isSwitchingChannel) {
-            // メッセージがある場合、またはロード完了かつメッセージ0の場合
-            if (messages.length > 0 || (!isLoadingChannel && messages.length === 0)) {
-                // 1. 強制スクロール (Paint前)
-                if (messagesEndRef.current) {
-                    messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
-                }
-
-                // 2. マスク解除 (Paint許可)
-                requestAnimationFrame(() => {
-                    setIsSwitchingChannel(false);
-                });
+        // if (isSwitchingChannel) {
+        // メッセージがある場合、またはロード完了かつメッセージ0の場合
+        if (messages.length > 0 || (!isLoadingChannel && messages.length === 0)) {
+            // 1. 強制スクロール (Paint前)
+            if (messagesEndRef.current) {
+                messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
             }
+            // 2. マスク解除 (Paint許可)
+            // requestAnimationFrame(() => {
+            //     setIsSwitchingChannel(false);
+            // });
         }
-    }, [messages, isSwitchingChannel, isLoadingChannel]);
+        // }
+    }, [messages, isLoadingChannel]);
 
 
     const loadOlderMessages = async () => {
@@ -431,14 +519,14 @@ function App() {
 
     useEffect(() => {
         // 通常のメッセージ受信時（チャンネル切り替え以外）
-        if (!isSwitchingChannel && !showScrollButton && messagesEndRef.current && !isLoadingChannel && messages.length > 0) {
+        if (/*!isSwitchingChannel &&*/ !showScrollButton && messagesEndRef.current && !isLoadingChannel && messages.length > 0) {
             const lastMsg = messages[messages.length - 1];
             const isRecent = new Date().getTime() - new Date(lastMsg.timestamp).getTime() < 5000;
             if (isRecent) {
                 messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
             }
         }
-    }, [messages, isSwitchingChannel, showScrollButton, isLoadingChannel]);
+    }, [messages, showScrollButton, isLoadingChannel]);
 
     const handleSearch = async () => {
         if (!searchQuery.trim() || !selectedGuild) return;
@@ -478,6 +566,22 @@ function App() {
             setStatus(`Search Error: ${e}`);
         }
         setIsSearching(false);
+    };
+
+    const handleSendMessage = async (content: string) => {
+        if (!content.trim() || !selectedChannel || !selectedGuild) return;
+        try {
+            await invoke('send_message', {
+                guildId: selectedGuild,
+                channelId: selectedChannel,
+                content: content.trim()
+            });
+            // Optimistic update or wait for event is fine. 
+            // We listen to 'message_create' so it should appear automatically.
+        } catch (e) {
+            console.error("Failed to send message:", e);
+            setStatus(`Send Error: ${e}`);
+        }
     };
 
     const clearSearch = () => {
@@ -535,28 +639,84 @@ function App() {
                 <div className="p-4 border-b border-gray-800 font-bold text-lg text-terminal-green">Channels</div>
                 <div className="flex-1 overflow-y-auto p-2">
                     {(() => {
+                        // 1. Classification
                         const categories = channels.filter(c => c.kind === 'Category');
-                        const textChannels = channels.filter(c => c.kind !== 'Category');
-                        const categoryMap: Record<string, Channel[]> = {};
-                        const orphans: Channel[] = [];
+                        const threads = channels.filter(c =>
+                            c.kind === 'PublicThread' ||
+                            c.kind === 'PrivateThread' ||
+                            c.kind === 'AnnouncementThread'
+                        );
+                        // Standard channels include Text, Voice, Forum, etc. Exclude Categories and Threads.
+                        const standardChannels = channels.filter(c =>
+                            c.kind !== 'Category' &&
+                            c.kind !== 'PublicThread' &&
+                            c.kind !== 'PrivateThread' &&
+                            c.kind !== 'AnnouncementThread'
+                        );
 
-                        textChannels.forEach(c => {
+                        // 2. Maps
+                        const channelMap: Record<string, Channel[]> = {}; // Category ID -> Channels
+                        const threadMap: Record<string, Channel[]> = {};  // Channel ID -> Threads
+                        const orphans: Channel[] = []; // Channels with no category
+
+                        // Map Threads to Parents
+                        threads.forEach(t => {
+                            if (t.parent_id) {
+                                if (!threadMap[t.parent_id]) threadMap[t.parent_id] = [];
+                                threadMap[t.parent_id].push(t);
+                            }
+                        });
+
+                        // Map Channels to Categories
+                        standardChannels.forEach(c => {
                             if (c.parent_id) {
-                                if (!categoryMap[c.parent_id]) categoryMap[c.parent_id] = [];
-                                categoryMap[c.parent_id].push(c);
+                                if (!channelMap[c.parent_id]) channelMap[c.parent_id] = [];
+                                channelMap[c.parent_id].push(c);
                             } else {
                                 orphans.push(c);
                             }
                         });
 
-                        const renderChannel = (c: Channel) => (
-                            <div
-                                key={c.id}
-                                onClick={() => fetchMessages(c.id)}
-                                className={`ml-2 p-1 px-2 cursor-pointer hover:bg-gray-900 rounded truncate text-sm flex items-center ${selectedChannel === c.id ? 'bg-gray-800 text-white' : 'text-gray-400'}`}
-                            >
-                                <span className="text-gray-600 mr-1 text-xs">{c.kind.includes('Voice') ? '🔊' : '#'}</span>
-                                {c.name}
+                        const getIcon = (kind: string) => {
+                            if (kind === 'Voice') return '🔊';
+                            if (kind === 'Forum') return '🗨️';
+                            if (kind.includes('Thread')) return '└';
+                            return '#';
+                        };
+
+                        const renderChannelItem = (c: Channel, isThread = false) => (
+                            <div key={c.id}>
+                                <div
+                                    onClick={(e) => { e.stopPropagation(); fetchMessages(c.id); }}
+                                    className={`
+                                        ${isThread ? 'ml-6 border-l-2 border-gray-800' : 'ml-2'} 
+                                        p-1 px-2 cursor-pointer hover:bg-gray-900 rounded truncate text-sm flex items-center 
+                                        ${selectedChannel === c.id ? 'bg-gray-800 text-white' : 'text-gray-400'}
+                                    `}
+                                >
+                                    <span className="text-gray-600 mr-1 text-xs w-4 flex justify-center">{getIcon(c.kind)}</span>
+                                    {c.name}
+                                </div>
+                                {!isThread && threadMap[c.id] && (
+                                    <div className="space-y-0.5 mt-0.5">
+                                        {threadMap[c.id]
+                                            .filter(t => {
+                                                // Sidebar Filter: Show only threads updated in last 5 days
+                                                const idToUse = t.last_message_id || t.id;
+                                                if (!idToUse) return false;
+                                                const timestamp = Number(BigInt(idToUse) >> 22n) + 1420070400000;
+                                                const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+                                                return (Date.now() - timestamp) <= FIVE_DAYS_MS;
+                                            })
+                                            .sort((a, b) => {
+                                                // Sort by last_message_id (descending) -> newest first
+                                                const idA = BigInt(a.last_message_id || a.id);
+                                                const idB = BigInt(b.last_message_id || b.id);
+                                                return idA < idB ? 1 : -1;
+                                            })
+                                            .map(t => renderChannelItem(t, true))}
+                                    </div>
+                                )}
                             </div>
                         );
 
@@ -564,7 +724,7 @@ function App() {
                             <div className="space-y-4">
                                 {orphans.length > 0 && (
                                     <div className="space-y-1">
-                                        {orphans.map(renderChannel)}
+                                        {orphans.map(c => renderChannelItem(c))}
                                     </div>
                                 )}
                                 {categories.sort((a, b) => (Number(a.id) - Number(b.id))).map(cat => (
@@ -573,7 +733,7 @@ function App() {
                                             {cat.name}
                                         </div>
                                         <div className="space-y-1">
-                                            {categoryMap[cat.id]?.map(renderChannel)}
+                                            {channelMap[cat.id]?.map(c => renderChannelItem(c))}
                                         </div>
                                     </div>
                                 ))}
@@ -594,7 +754,12 @@ function App() {
                                 </div>
                             </div>
                             <button
-                                onClick={() => {
+                                onClick={async () => {
+                                    try {
+                                        await invoke('leave_room');
+                                    } catch (e) {
+                                        console.error("Failed to leave room:", e);
+                                    }
                                     setConnectedVoiceChannel(null);
                                     clearPeers();
                                 }}
@@ -664,167 +829,77 @@ function App() {
 
             {/* Main: Chat or Voice */}
             {(selectedChannel && (channels.find(c => c.id === selectedChannel)?.kind === 'Voice' || channels.find(c => c.id === selectedChannel)?.kind === 'voice')) ? (
-                <VoiceLayout />
-            ) : (
-                <>
-                    {/* Chat Header and Search - Kept inside Main Area for Text */}
-                    <div className="flex-1 flex flex-col bg-black relative">
-                        <div className="p-4 border-b border-gray-800 flex flex-col gap-2">
-                            <div className="flex justify-between items-center">
-                                <span className="font-bold text-lg text-terminal-green">Chat</span>
-                                <span className="text-sm text-gray-500">{status}</span>
-                            </div>
-                            {/* Search Bar */}
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    placeholder="Search messages..."
-                                    className="flex-1 bg-gray-900 border border-gray-700 px-3 py-1 rounded text-white text-sm focus:outline-none focus:border-terminal-green"
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                                    disabled={!selectedChannel}
-                                />
-                                {searchResults !== null && (
-                                    <button onClick={clearSearch} className="text-xs text-gray-400 hover:text-white px-2">
-                                        Clear ({searchResults.length})
-                                    </button>
-                                )}
-                            </div>
+                // VOICE LAYOUT with CHAT
+                <VoiceLayout
+                    messages={messages as any} // Cast might be needed due to local interface definition
+                    onSendMessage={handleSendMessage}
+                    myId={myId}
+
+                    isLoadingMore={isLoadingMore}
+                    showScrollButton={showScrollButton}
+                    onLoadMore={loadOlderMessages}
+                    onScrollToBottom={scrollToBottom}
+                    onMessagesScroll={handleMessagesScroll}
+
+                    messagesContainerRef={messagesContainerRef}
+                    messagesEndRef={messagesEndRef}
+                />
+            ) : (selectedChannel && channels.find(c => c.id === selectedChannel)?.kind === 'Forum') ? (
+                <div className="flex-1 flex flex-col bg-black relative">
+                    <div className="p-4 border-b border-gray-800 flex flex-col gap-2">
+                        <div className="flex justify-between items-center">
+                            <span className="font-bold text-lg text-terminal-green">
+                                Forum: {channels.find(c => c.id === selectedChannel)?.name}
+                            </span>
                         </div>
-
-                        {/* Message List Wrapper */}
-                        <div className="flex-1 relative flex flex-col overflow-hidden">
-                            <div
-                                key={selectedChannel || 'empty'}
-                                ref={messagesContainerRef}
-                                className="flex-1 overflow-y-auto p-4 space-y-4"
-                                style={{
-                                    visibility: isSwitchingChannel ? 'hidden' : 'visible',
-                                }}
-                                onScroll={handleMessagesScroll}
-                            >
-                                {isLoadingChannel && (
-                                    <div className="text-center text-gray-500 text-sm py-4">Loading messages...</div>
-                                )}
-                                {isSearching && (
-                                    <div className="text-center text-gray-500 text-sm py-2">Searching...</div>
-                                )}
-                                {isLoadingMore && !searchResults && (
-                                    <div className="text-center text-gray-500 text-sm py-2">Loading older messages...</div>
-                                )}
-                                {(searchResults || messages).length === 0 ? (
-                                    <div className="text-center text-gray-600 mt-10">
-                                        {searchResults !== null ? 'No search results' : 'Select a channel to view messages'}
-                                    </div>
-                                ) : (
-                                    (searchResults || messages).map((m) => (
-                                        <div key={m.id} className="group hover:bg-gray-900 p-2 -mx-2 rounded">
-                                            <div className="flex items-baseline gap-2 flex-wrap">
-                                                <span className="font-bold text-blue-400">{m.author}</span>
-                                                <span className="text-xs text-gray-600">
-                                                    {searchResults
-                                                        ? new Date(m.timestamp).toLocaleString()
-                                                        : new Date(m.timestamp).toLocaleTimeString()}
-                                                </span>
-                                                {searchResults && m.channel_id !== selectedChannel && (
-                                                    <span className="text-xs bg-gray-800 text-gray-400 px-1 rounded">
-                                                        #{channels.find(c => c.id === m.channel_id)?.name || 'unknown'}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="mt-1 text-gray-300 whitespace-pre-wrap break-words">{m.content}</div>
-
-                                            {/* Embeds Rendering */}
-                                            {m.embeds && m.embeds.map((embed, idx) => (
-                                                <div key={idx} className="mt-2 border-l-4 bg-gray-900 rounded p-3" style={{ borderLeftColor: embed.color ? `#${embed.color.toString(16).padStart(6, '0')}` : '#202225' }}>
-                                                    <div className="flex gap-4">
-                                                        <div className="flex-1 min-w-0">
-                                                            {embed.title && <div className="font-bold text-white mb-1">{embed.title}</div>}
-                                                            {embed.description && <div className="text-gray-300 text-sm whitespace-pre-wrap break-words">{embed.description}</div>}
-                                                            {embed.image && <img src={embed.image.url} alt="Embed" className="mt-2 max-w-full rounded" style={{ maxHeight: '300px' }} />}
-                                                        </div>
-                                                        {embed.thumbnail && (
-                                                            <div className="flex-shrink-0">
-                                                                <img src={embed.thumbnail.url} alt="Thumbnail" className="w-20 h-20 rounded object-cover" />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))}
-
-                                            {/* Attachments Rendering */}
-                                            {m.attachments && m.attachments.map((att) => (
-                                                <div key={att.id} className="mt-2">
-                                                    {att.content_type?.startsWith('image/') ? (
-                                                        <img
-                                                            src={att.url}
-                                                            alt={att.filename}
-                                                            width={att.width}
-                                                            height={att.height}
-                                                            className="max-w-full rounded bg-gray-900"
-                                                            style={{
-                                                                maxHeight: '350px',
-                                                                height: 'auto', // Preserve aspect ratio if width is constrained
-                                                                width: 'auto',  // Allow width to shrink if height is constrained
-                                                                aspectRatio: att.width && att.height ? `${att.width}/${att.height}` : undefined
-                                                            }}
-                                                        />
-                                                    ) : (
-                                                        <div className="bg-gray-800 p-2 rounded flex items-center gap-2 max-w-sm border border-gray-700">
-                                                            <div className="text-2xl">📄</div>
-                                                            <div className="overflow-hidden">
-                                                                <div className="font-bold text-sm truncate text-gray-300">{att.filename}</div>
-                                                                <a href={att.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">Download</a>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ))
-                                )}
-                                <div ref={messagesEndRef} />
-                            </div>
-
-                            {/* Scroll Button */}
-                            {showScrollButton && (
-                                <button
-                                    onClick={scrollToBottom}
-                                    className="absolute bottom-20 right-8 bg-gray-800 p-2 rounded-full shadow-lg hover:bg-gray-700 animate-bounce"
-                                >
-                                    ⬇
-                                </button>
-                            )}
-
-                            {/* Input Area */}
-                            <div className="p-4 bg-gray-900 border-t border-gray-800">
-                                <input
-                                    type="text"
-                                    placeholder={selectedChannel ? `Message #${channels.find(c => c.id === selectedChannel)?.name}` : "Select a channel"}
-                                    className={`w-full bg-gray-800 border border-gray-700 p-3 rounded text-white focus:outline-none focus:border-terminal-green ${!selectedChannel ? 'cursor-not-allowed opacity-50' : ''}`}
-                                    disabled={!selectedChannel}
-                                    onKeyDown={async (e) => {
-                                        if (e.key === 'Enter' && selectedChannel && selectedGuild) {
-                                            const input = e.currentTarget;
-                                            const content = input.value.trim();
-                                            if (!content) return;
-
-                                            input.value = ''; // Clear immediately
-                                            try {
-                                                await invoke<Message>('send_message', { guildId: selectedGuild, channelId: selectedChannel, content });
-                                                // Gateway will handle adding the message via MESSAGE_CREATE event
-                                            } catch (err) {
-                                                setStatus(`Send Failed: ${err}`);
-                                                input.value = content; // Revert on failure
-                                            }
-                                        }
-                                    }}
-                                />
-                            </div>
-                        </div>
+                        <div className="text-sm text-gray-500">Select a post to view</div>
                     </div>
-                </>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        {channels.filter(c => c.parent_id === selectedChannel).length === 0 ? (
+                            <div className="text-center text-gray-500 mt-10">No active posts found in this forum.</div>
+                        ) : (
+                            channels.filter(c => c.parent_id === selectedChannel).map(thread => (
+                                <div
+                                    key={thread.id}
+                                    onClick={(e) => { e.stopPropagation(); fetchMessages(thread.id); }}
+                                    className="p-4 bg-gray-900 border border-gray-800 rounded-lg cursor-pointer hover:bg-gray-800 hover:border-gray-700 transition-all group"
+                                >
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-gray-500 group-hover:text-cyan-400">└</span>
+                                        <h3 className="font-bold text-gray-200 group-hover:text-white">{thread.name}</h3>
+                                    </div>
+                                    <div className="text-xs text-gray-500 ml-5">
+                                        Click to open thread
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <ChannelChat
+                    status={status}
+                    selectedChannel={selectedChannel}
+                    channelName={channels.find(c => c.id === selectedChannel)?.name}
+                    channels={channels as any} // Cast to compatible type
+                    messages={messages}
+                    searchResults={searchResults}
+                    searchQuery={searchQuery}
+                    isSearching={isSearching}
+                    isLoadingChannel={isLoadingChannel}
+                    isLoadingMore={isLoadingMore}
+                    showScrollButton={showScrollButton}
+
+                    setSearchQuery={setSearchQuery}
+                    handleSearch={handleSearch}
+                    clearSearch={clearSearch}
+                    handleSendMessage={handleSendMessage}
+                    scrollToBottom={scrollToBottom}
+                    handleMessagesScroll={handleMessagesScroll}
+
+                    messagesContainerRef={messagesContainerRef}
+                    messagesEndRef={messagesEndRef}
+                />
             )}
         </div>
     );

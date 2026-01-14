@@ -15,6 +15,7 @@ pub struct SimpleChannel {
     pub name: String,
     pub kind: String,
     pub parent_id: Option<String>,
+    pub last_message_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -24,6 +25,7 @@ pub struct SimpleMessage {
     pub channel_id: String,
     pub content: String,
     pub author: String,
+    pub author_id: String,
     pub timestamp: String,
     pub embeds: Vec<DiscordEmbed>,
     pub attachments: Vec<DiscordAttachment>,
@@ -90,6 +92,13 @@ pub struct DiscordChannel {
     #[serde(rename = "type")]
     pub kind: u8,
     pub parent_id: Option<String>,
+    pub thread_metadata: Option<DiscordThreadMetadata>,
+    pub last_message_id: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DiscordThreadMetadata {
+    pub archived: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -101,4 +110,5 @@ pub struct DiscordMessage {
     pub channel_id: String,
     pub embeds: Vec<DiscordEmbed>,
     pub attachments: Vec<DiscordAttachment>,
+    pub thread: Option<DiscordChannel>,
 }
