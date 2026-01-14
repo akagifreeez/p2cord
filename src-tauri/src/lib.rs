@@ -58,14 +58,8 @@ pub fn run() {
             bridge::gateway::start_gateway,
             
             // Bridge: Room (Unified)
-            bridge::room::join_room,
-            bridge::room::leave_room,
             bridge::room::fetch_messages,
 
-            // Bridge: Media (Audio Control)
-            bridge::media::toggle_mute,
-            bridge::media::toggle_deafen,
-            bridge::media::get_audio_state,
 
             // Store (Database) commands
             store::get_cached_messages,
@@ -75,11 +69,7 @@ pub fn run() {
             // Discord状態の初期化
             app.manage(services::state::DiscordState::new());
 
-            // Audio状態の初期化
-            app.manage(services::state::AudioState::new());
-            
-            // Media (P2P Session) 状態の初期化
-            app.manage(services::state::MediaState::new());
+
 
             // Database状態の初期化
             let app_data_dir = app.path().app_data_dir().expect("Failed to get app data dir");

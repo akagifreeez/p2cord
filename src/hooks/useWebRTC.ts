@@ -14,6 +14,51 @@ import type { ChatMessageData } from '../lib/dataChannel';
 import { BandwidthMonitor, type BandwidthStats } from '../lib/bandwidthMonitor';
 import { AdaptiveController } from '../lib/adaptiveController';
 
+// Helper to prioritize specific codecs
+function prioritizeCodecs(pc: RTCPeerConnection, preferredCodec: 'auto' | 'av1' | 'vp9' | 'h264' | 'vp8') {
+    if (preferredCodec === 'auto') {
+        preferredCodec = 'av1'; // Default priority
+    }
+
+    const caps = RTCRtpReceiver.getCapabilities('video');
+    if (!caps || !caps.codecs) return;
+
+    // Use a stable sort to move preferred codec to the top without destroying original order
+    // (which might contain important associations like RTX/FEC)
+    const codecs = [...caps.codecs].sort((a, b) => {
+        const aMime = a.mimeType.toLowerCase();
+        const bMime = b.mimeType.toLowerCase();
+        const target = `video/${preferredCodec}`;
+
+        // 1. Exact match moves to top
+        if (aMime === target && bMime !== target) return -1;
+        if (aMime !== target && bMime === target) return 1;
+
+        // 2. AV1 > VP9 > H264 fallback priority (only if neither is the target)
+        // This helps if the target (e.g. AV1) is missing, we still want a good fallback.
+        /* 
+           Simpler approach: Just float the target to top. 
+           Browser defaults are usually good enough for the rest.
+        */
+        return 0;
+    });
+
+    pc.getTransceivers().forEach(transceiver => {
+        if (transceiver.receiver.track.kind === 'video') {
+            try {
+                if ('setCodecPreferences' in transceiver && typeof transceiver.setCodecPreferences === 'function') {
+                    transceiver.setCodecPreferences(codecs);
+                    console.log(`[WebRTC] Codec preferences set. Preferred: ${preferredCodec}`, codecs.map(c => c.mimeType).slice(0, 5));
+                }
+            } catch (e) {
+                console.warn('[WebRTC] setCodecPreferences failed', e);
+            }
+        }
+    });
+}
+
+
+
 // シグナリングサーバーURL（デフォルト）
 const DEFAULT_SIGNALING_URL = 'ws://localhost:8080';
 
@@ -140,7 +185,7 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
     const audioContextRef = useRef<AudioContext | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const vadIntervalRef = useRef<number | null>(null);
-    const VAD_THRESHOLD = 30; // 音量閾値（0-255）
+    const VAD_THRESHOLD = 20; // 音量閾値（0-255） - 30から緩和
     const VAD_INTERVAL_MS = 100; // チェック間隔
 
     // 画面共有
@@ -161,7 +206,7 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
 
     // Adaptive Bitrate Control
     const [connectionQuality, setConnectionQuality] = useState<BandwidthStats | null>(null);
-    const [isAdaptiveModeEnabled, setAdaptiveModeEnabled] = useState(true);
+    const [isAdaptiveModeEnabled, setAdaptiveModeEnabled] = useState(false);
     const bandwidthMonitorRef = useRef<BandwidthMonitor | null>(null);
     const adaptiveControllerRef = useRef<AdaptiveController | null>(null);
 
@@ -245,6 +290,30 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
         pc.ontrack = (event) => {
             console.log(`[WebRTC] Track受信: ${peerId} (${event.track.kind})`);
             const stream = event.streams[0] || new MediaStream([event.track]);
+
+            const triggerUpdate = () => setRemoteStreams(prev => new Map(prev));
+
+            // 1. Track removal from stream
+            stream.onremovetrack = (ev) => {
+                console.log(`[WebRTC] Track removed: ${peerId} (${ev.track.kind})`);
+                triggerUpdate();
+            };
+
+            // 2. Track ended (e.g. Stop Sharing button)
+            event.track.onended = () => {
+                console.log(`[WebRTC] Track ended: ${peerId} (${event.track.kind})`);
+                triggerUpdate();
+            };
+
+            // 3. Track mute/unmute (optional but good for responsiveness)
+            event.track.onmute = () => {
+                console.log(`[WebRTC] Track muted: ${peerId} (${event.track.kind})`);
+                triggerUpdate();
+            };
+            event.track.onunmute = () => {
+                console.log(`[WebRTC] Track unmuted: ${peerId} (${event.track.kind})`);
+                triggerUpdate();
+            };
 
             setRemoteStreams(prev => {
                 const newMap = new Map(prev);
@@ -479,28 +548,61 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
     /**
      * 画面共有
      */
-    const startScreenShare = useCallback(async (_config?: QualityConfig) => {
+    /**
+     * 画面共有
+     */
+    const startScreenShare = useCallback(async (config: QualityConfig = {
+        resolution: '1080p',
+        frameRate: 60,
+        bitrate: 'auto',
+        codec: 'av1',
+        contentHint: 'motion'
+    }) => {
         try {
-            const stream = await navigator.mediaDevices.getDisplayMedia({
+            // Build constraints based on config
+            let width: number | undefined;
+            let height: number | undefined;
+
+            if (config.resolution === 'native') {
+                width = 3840; height = 2160;
+            } else if (config.resolution === '1080p') {
+                width = 1920; height = 1080;
+            } else if (config.resolution === '720p') {
+                width = 1280; height = 720;
+            }
+
+            const constraints: MediaStreamConstraints = {
                 video: {
-                    // @ts-ignore: cursor is not in standard definition but supported by browsers
-                    cursor: 'motion'
+                    cursor: 'motion',
+                    width: width ? { ideal: width } : undefined,
+                    height: height ? { ideal: height } : undefined,
+                    frameRate: { ideal: config.frameRate, max: config.frameRate }
                 } as MediaTrackConstraints,
                 audio: true
-            });
+            };
+
+            console.log('[WebRTC] Requesting DisplayMedia with:', constraints);
+            const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+
+            // Apply contentHint
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack && 'contentHint' in videoTrack) {
+                (videoTrack as any).contentHint = config.contentHint;
+            }
 
             setLocalStream(stream);
             localStreamRef.current = stream;
             setIsScreenSharing(true);
 
             // 全ピアに追加/置換
-            peerConnectionsRef.current.forEach(async (pc, _peerId) => {
+            peerConnectionsRef.current.forEach(async (pc, peerId) => {
+                // Apply Codec Preferences
+                prioritizeCodecs(pc, config.codec);
+
                 // 既存のビデオSenderを探す
                 const senders = pc.getSenders();
                 const videoSender = senders.find(s => s.track?.kind === 'video');
 
-                // Track
-                const videoTrack = stream.getVideoTracks()[0];
                 const audioTrack = stream.getAudioTracks()[0];
 
                 if (videoSender) {
@@ -513,14 +615,14 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
                     }
 
                     // Renegotationが必要
-                    // manually trigger offer if needed
-                    /*
-                    if (!pc.onnegotiationneeded) { // セットされてない場合(Receiver)など
+                    // negotiationneededが発火しない場合や、Answerer側からの変更の場合手動でOffer
+                    try {
                         const offer = await pc.createOffer();
                         await pc.setLocalDescription(offer);
                         signalingRef.current?.sendOffer(peerId, offer);
+                    } catch (e) {
+                        console.error('[WebRTC] Renegotiation failed:', e);
                     }
-                    */
                 }
 
                 // Adaptive Bitrate Control: 監視開始
@@ -531,6 +633,11 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
                         adaptiveControllerRef.current = new AdaptiveController();
                         adaptiveControllerRef.current.setSender(videoSender);
 
+                        // Bitrate restriction based on config
+                        if (config.bitrate !== 'auto' && config.bitrate > 0) {
+                            adaptiveControllerRef.current.setMaxBitrate(config.bitrate);
+                        }
+
                         // BandwidthMonitor初期化
                         bandwidthMonitorRef.current = new BandwidthMonitor(pc, (stats) => {
                             setConnectionQuality(stats);
@@ -540,8 +647,8 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
                                 adaptiveControllerRef.current.setRelayConnection(true);
                             }
 
-                            // 自動調整
-                            if (isAdaptiveModeEnabled && adaptiveControllerRef.current) {
+                            // 自動調整 (Autoの時のみ)
+                            if (isAdaptiveModeEnabled && adaptiveControllerRef.current && config.bitrate === 'auto') {
                                 adaptiveControllerRef.current.adjustBasedOnStats(stats);
                             }
                         });
@@ -588,7 +695,12 @@ export function useWebRTC(options?: { signalingUrl?: string; turnConfig?: TurnCo
             setIsSpeaking(false);
 
             const constraints: MediaStreamConstraints = {
-                audio: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : true
+                audio: {
+                    deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                }
             };
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             localAudioStreamRef.current = stream;

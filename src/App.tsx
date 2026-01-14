@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { VoiceLayout } from './components/VoiceLayout';
 import { ChannelChat } from './components/ChannelChat';
+import { useWebRTC } from './hooks/useWebRTC';
 
 interface Guild {
     id: string;
@@ -52,19 +53,58 @@ interface Message {
 
 interface SimpleMessage {
     id: string;
-    author_id: string; // From backend (author.id)
-    author_name: string;
-    author_avatar: string;
+    author_id: string;
+    author: string; // Correct field name from Rust
+    // author_avatar: string; // Rust definition doesn't seem to have this?
     content: string;
     timestamp: string;
-    attachments?: string; // JSON string
+    embeds: Embed[];
+    attachments: Attachment[]; // Rust sends Vec<DiscordAttachment> objects, not string
 }
 
 function App() {
+
+    const webrtc = useWebRTC({ signalingUrl: 'ws://localhost:8080' });
+
+    // Listen for real-time messages
+    useEffect(() => {
+        const unlistenPromise = listen<SimpleMessage>('message_create', (event) => {
+            const msg = event.payload;
+            console.log("[App] Realtime Message:", msg);
+
+            // Only add if it belongs to the current channel
+            if (selectedChannelRef.current === msg.channel_id) {
+                const newMsg: Message = {
+                    id: msg.id,
+                    guild_id: msg.guild_id || "",
+                    channel_id: msg.channel_id!,
+                    content: msg.content,
+                    author: msg.author,
+                    author_id: msg.author_id,
+                    timestamp: msg.timestamp,
+                    embeds: msg.embeds || [],
+                    attachments: msg.attachments || []
+                };
+
+                setMessages(prev => {
+                    if (prev.some(m => m.id === newMsg.id)) return prev;
+                    return [newMsg, ...prev];
+                });
+            }
+        });
+
+        return () => {
+            unlistenPromise.then(unlisten => unlisten());
+        };
+    }, []);
+
     const [token, setToken] = useState('');
+    const [myId, setMyId] = useState<string | null>(null); // Logged-in User ID
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [status, setStatus] = useState('');
-    const [myId, setMyId] = useState<string | null>(null); // Logged-in User ID
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<any[] | null>(null);
+    const [showScrollButton, setShowScrollButton] = useState(false);
 
     const [guilds, setGuilds] = useState<Guild[]>([]);
     // Use global store
@@ -75,7 +115,7 @@ function App() {
         setCurrentChannel,
         connectedVoiceChannelId,
         setConnectedVoiceChannel,
-        remoteSpeakers,
+        remoteSpeakers: _remoteSpeakers,
         setRemoteSpeaker,
         addPeer,
         removePeer,
@@ -163,8 +203,7 @@ function App() {
     }, []);
 
     // Search state
-    const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState<Message[] | null>(null);
+
     const [isSearching, setIsSearching] = useState(false);
 
     const [isFetchingHistory, setIsFetchingHistory] = useState(false);
@@ -282,7 +321,7 @@ function App() {
     };
 
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [showScrollButton, setShowScrollButton] = useState(false);
+
     const messagesContainerRef = useRef<HTMLDivElement>(null);
 
     const fetchMessages = async (channelId: string, beforeId?: string) => {
@@ -314,20 +353,18 @@ function App() {
                     return;
                 }
 
-                // VOICE: Join P2P
+                // VOICE: Join P2P (Browser WebRTC)
                 console.log("Joining Voice Channel:", channelId);
                 setVoiceTransitioning(true);
                 setConnectedVoiceChannel(channelId);
-                clearPeers();
                 setMessages([]);
                 setIsLoadingChannel(false);
 
                 try {
-                    // Start P2P
-                    await invoke('join_room', {
-                        guildId: selectedGuild,
-                        channelId: channelId
-                    });
+                    // Start Browser WebRTC session
+                    webrtc.joinRoom(channelId, 'User');
+                    // Start microphone automatically
+                    await webrtc.startMicrophone();
                 } catch (e) {
                     console.error("Failed to join voice:", e);
                     setStatus(`Voice Error: ${e}`);
@@ -360,20 +397,17 @@ function App() {
                     const mapped: Message[] = fetchedMsgs.map(m => ({
                         id: m.id,
                         content: m.content,
-                        author: m.author_name,
-                        author_id: m.author_id, // Ensure author_id is passed
+                        author: m.author, // Fixed: author_name -> author
+                        author_id: m.author_id,
                         timestamp: m.timestamp,
                         guild_id: selectedGuild!,
                         channel_id: channelId,
-                        embeds: [],
-                        attachments: m.attachments ? JSON.parse(m.attachments) : [],
+                        embeds: m.embeds || [],
+                        attachments: m.attachments || [], // Fixed: no JSON.parse needed
                     }));
 
                     if (currentFetchId === fetchIdRef.current) {
-                        setMessages(prev => { // prev unused warning might persist if not used, but setMessages expects a function or value
-                            // If we have cache, merge? For now just overwrite or simple strategy
-                            return mapped.reverse();
-                        });
+                        setMessages(mapped.reverse());
                     }
                 } catch (e) {
                     console.error("Failed to fetch voice text messages:", e);
@@ -419,12 +453,13 @@ function App() {
                 const mapped: Message[] = fetchedMsgs.map(m => ({
                     id: m.id,
                     content: m.content,
-                    author: m.author_name,
+                    author: m.author,
+                    author_id: m.author_id,
                     timestamp: m.timestamp,
                     guild_id: selectedGuild!,
                     channel_id: channelId,
-                    embeds: [],
-                    attachments: m.attachments ? JSON.parse(m.attachments) : [],
+                    embeds: m.embeds || [],
+                    attachments: m.attachments || [],
                 }));
 
                 if (currentFetchId !== fetchIdRef.current) {
@@ -831,6 +866,7 @@ function App() {
             {(selectedChannel && (channels.find(c => c.id === selectedChannel)?.kind === 'Voice' || channels.find(c => c.id === selectedChannel)?.kind === 'voice')) ? (
                 // VOICE LAYOUT with CHAT
                 <VoiceLayout
+                    webrtc={webrtc}
                     messages={messages as any} // Cast might be needed due to local interface definition
                     onSendMessage={handleSendMessage}
                     myId={myId}

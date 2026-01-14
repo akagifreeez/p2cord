@@ -105,10 +105,16 @@ signaling-server/
     *   **Split Layout**: ボイスチャット画面をビデオグリッドとチャットの左右分割レイアウトに変更
     *   **Message Sync Fix**: ボイスチャンネル参加時のメッセージ履歴読み込みバグ修正
     *   **Rich Content & Scrolling**: 画像・Embed表示対応、上スクロールによる過去ログ読み込み(Pagination)対応
+*   **Feature Updates (2026-01-15)**:
+    *   **Focused View**: 画面共有/話者の自動拡大、クリックによるフォーカス切替
+    *   **Real-time Chat**: Discord Gateway連携によるメッセージ即時反映
+    *   **Stream Quality**: 
+        *   AV1コーデック優先ロジック（安定化済み）
+        *   画質設定UI（1080p/720p/Native, 15/30/60/**120fps**）
+        *   Adaptive Bitrate Control連携
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
-*   画面共有機能
 
 ### ⚠️ Known Issues
 *   特になし

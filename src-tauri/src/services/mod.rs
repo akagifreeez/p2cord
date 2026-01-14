@@ -1,6 +1,6 @@
 pub mod identity;
 pub mod social;
-pub mod media;
+
 pub mod desktop;
 pub mod models;
 pub mod state;

@@ -1,9 +1,93 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useSessionStore } from '../stores/sessionStore';
 import { ChannelChat, Message } from './ChannelChat';
-import { useState, useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
+import type { UseWebRTCReturn } from '../hooks/useWebRTC';
+import { QualitySettings, defaultQualityConfig, loadQualityConfig, saveQualityConfig, type QualityConfig } from './QualitySettings';
+
+// Screen Share Preview Component
+function ScreenSharePreview({ stream }: { stream: MediaStream }) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        if (videoRef.current && stream) {
+            videoRef.current.srcObject = stream;
+        }
+    }, [stream]);
+
+    return (
+        <div className="relative aspect-video glass-card overflow-hidden border-2 border-cyan-500/50 shadow-[0_0_20px_rgba(6,182,212,0.3)] col-span-full lg:col-span-2">
+            <video
+                ref={videoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-contain bg-black"
+            />
+            <div className="absolute top-3 left-3 px-3 py-1 rounded-full bg-cyan-500/20 backdrop-blur text-xs font-bold text-cyan-400 border border-cyan-500/30 flex items-center gap-2">
+                <span className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse"></span>
+                SCREEN SHARING
+            </div>
+            <div className="absolute bottom-3 right-3 px-3 py-1 rounded-full bg-black/60 backdrop-blur text-xs font-bold text-white border border-white/10">
+                YOUR SCREEN
+            </div>
+        </div>
+    );
+}
+
+// Remote Audio Player - invisible component to play remote peer audio
+function RemoteAudioPlayer({ streams }: { streams: Map<string, MediaStream> }) {
+    const audioRefs = useRef<Map<string, HTMLAudioElement>>(new Map());
+
+    useEffect(() => {
+        // Create/update audio elements for each remote stream
+        streams.forEach((stream, peerId) => {
+            let audioEl = audioRefs.current.get(peerId);
+
+            if (!audioEl) {
+                // Create new audio element
+                audioEl = document.createElement('audio');
+                audioEl.autoplay = true;
+                audioEl.id = `remote-audio-${peerId}`;
+                document.body.appendChild(audioEl);
+                audioRefs.current.set(peerId, audioEl);
+                console.log(`[Audio] Created audio element for peer: ${peerId}`);
+            }
+
+            // Update stream if different
+            if (audioEl.srcObject !== stream) {
+                audioEl.srcObject = stream;
+                audioEl.play().catch(e => console.error('[Audio] Play failed:', e));
+                console.log(`[Audio] Playing stream for peer: ${peerId}`);
+            }
+        });
+
+        // Remove audio elements for disconnected peers
+        audioRefs.current.forEach((audioEl, peerId) => {
+            if (!streams.has(peerId)) {
+                audioEl.srcObject = null;
+                audioEl.remove();
+                audioRefs.current.delete(peerId);
+                console.log(`[Audio] Removed audio element for peer: ${peerId}`);
+            }
+        });
+    }, [streams]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            audioRefs.current.forEach((audioEl) => {
+                audioEl.srcObject = null;
+                audioEl.remove();
+            });
+            audioRefs.current.clear();
+        };
+    }, []);
+
+    return null; // This component doesn't render anything visible
+}
 
 interface VoiceLayoutProps {
+    webrtc: UseWebRTCReturn; // WebRTC hook passed from App
     messages?: Message[];
     onSendMessage?: (text: string) => void;
     myId?: string | null;
@@ -23,34 +107,63 @@ function GridItem({
     label,
     isLocal = false,
     isSpeaking = false,
-    clientId
+    clientId,
+    videoStream,
+    onClick
 }: {
     label: string,
     isLocal?: boolean,
     isSpeaking?: boolean,
-    clientId: string
+    clientId: string,
+    videoStream?: MediaStream,
+    onClick?: () => void
 }) {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    // Check if stream actually has video tracks
+    const hasVideo = videoStream && videoStream.getVideoTracks().length > 0;
+
+    useEffect(() => {
+        if (videoRef.current && videoStream && hasVideo) {
+            videoRef.current.srcObject = videoStream;
+        }
+    }, [videoStream, hasVideo]);
+
     return (
-        <div className={`relative aspect-video glass-card overflow-hidden group border transition-all duration-300 ${isSpeaking ? 'border-green-500/50 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 hover:border-white/20'}`}>
-            <div className="w-full h-full flex flex-col items-center justify-center bg-black/20">
-                {/* Avatar Circle */}
-                <div className={`relative w-24 h-24 rounded-full flex items-center justify-center text-4xl font-bold border-4 transition-all duration-300 ${isSpeaking
-                    ? 'bg-green-500/20 text-green-400 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.4)] scale-110'
-                    : 'bg-white/10 text-gray-400 border-white/10 group-hover:bg-white/20 group-hover:text-white'
-                    }`}>
-                    {label[0].toUpperCase()}
+        <div
+            onClick={onClick}
+            className={`relative aspect-video glass-card overflow-hidden group border transition-all duration-300 ${isSpeaking ? 'border-green-500/50 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 hover:border-white/20'} ${onClick ? 'cursor-pointer' : ''}`}
+        >
+            {hasVideo ? (
+                <div className="w-full h-full bg-black relative">
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        muted // Remote audio is handled by RemoteAudioPlayer
+                        playsInline
+                        className="w-full h-full object-contain"
+                    />
+                </div>
+            ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-black/20">
+                    {/* Avatar Circle */}
+                    <div className={`relative w-24 h-24 rounded-full flex items-center justify-center text-4xl font-bold border-4 transition-all duration-300 ${isSpeaking
+                        ? 'bg-green-500/20 text-green-400 border-green-500 shadow-[0_0_30px_rgba(34,197,94,0.4)] scale-110'
+                        : 'bg-white/10 text-gray-400 border-white/10 group-hover:bg-white/20 group-hover:text-white'
+                        }`}>
+                        {label[0].toUpperCase()}
+                        {isSpeaking && (
+                            <div className="absolute inset-0 rounded-full border-4 border-green-500 animate-ping opacity-50"></div>
+                        )}
+                    </div>
+
+                    {/* Status Badge */}
                     {isSpeaking && (
-                        <div className="absolute inset-0 rounded-full border-4 border-green-500 animate-ping opacity-50"></div>
+                        <div className="mt-4 px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30 animate-pulse">
+                            SPEAKING
+                        </div>
                     )}
                 </div>
-
-                {/* Status Badge */}
-                {isSpeaking && (
-                    <div className="mt-4 px-3 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-full border border-green-500/30 animate-pulse">
-                        SPEAKING
-                    </div>
-                )}
-            </div>
+            )}
 
             {/* Label Overlay */}
             <div className="absolute bottom-3 left-3 px-3 py-1 rounded-full bg-black/60 backdrop-blur text-xs font-bold text-white border border-white/10 flex items-center gap-2">
@@ -68,94 +181,131 @@ function GridItem({
 }
 
 export function VoiceLayout({
+    webrtc,
     messages = [],
     onSendMessage = () => { },
-    myId = null,
+    myId: _myId = null,
     isLoadingMore = false,
     showScrollButton = false,
-    onLoadMore = () => { },
+    onLoadMore: _onLoadMore = () => { },
     onScrollToBottom = () => { },
     onMessagesScroll = () => { },
     messagesContainerRef,
     messagesEndRef
 }: VoiceLayoutProps) {
+    // webrtc is now passed as prop from App
+
     const {
         connectedVoiceChannelId,
-        remoteSpeakers,
-        connectedPeers,
-        isMuted,
-        isScreenSharing,
-        localSpeaking,
-        setMediaStatus,
         setConnectedVoiceChannel,
-        isConnected, // Correct property name
         setConnectionStatus,
-        clearPeers,
     } = useSessionStore();
 
     // Get transitioning state from store
     const isVoiceTransitioning = useSessionStore(state => state.isVoiceTransitioning);
     const setVoiceTransitioning = useSessionStore(state => state.setVoiceTransitioning);
 
-    // Toggle Mute
-    const handleToggleMute = async () => {
-        try {
-            const newState = await invoke<boolean>('toggle_mute');
-            setMediaStatus({ isMuted: newState });
-        } catch (e) {
-            console.error("Failed to toggle mute:", e);
-        }
+    // Quality Config State
+    const [qualityConfig, setQualityConfig] = useState<QualityConfig>(() => loadQualityConfig());
+
+    const handleQualityChange = (newConfig: QualityConfig) => {
+        setQualityConfig(newConfig);
+        saveQualityConfig(newConfig);
     };
 
-    // Toggle Screen Share
+    // Toggle Mute (now using browser WebRTC)
+    const handleToggleMute = () => {
+        webrtc.toggleMute();
+    };
+
+    // Toggle Screen Share (now using browser WebRTC)
     const handleToggleScreenShare = async () => {
-        // Placeholder for Screen Sharing logic
-        // If enabling: 
-        // 1. Trigger Screen Capture (Rust or JS)
-        // 2. Negotiate video track
-        const newState = !isScreenSharing;
-        setMediaStatus({ isScreenSharing: newState });
-        console.log("Screen Share Toggled:", newState);
-        // Toast or visual feedback handled by state change in UI
-        if (newState) {
-            // TODO: Invoke Rust backend to start screen capture
+        if (!webrtc.isScreenSharing) {
+            await webrtc.startScreenShare(qualityConfig);
         } else {
-            // TODO: Invoke Rust backend to stop
+            webrtc.stopScreenShare();
         }
     };
 
-    // Disconnect
+    // Disconnect (now using browser WebRTC)
     const handleDisconnect = async () => {
-        // Prevent rapid toggling
         if (isVoiceTransitioning) {
             console.log("Operation in progress, please wait...");
             return;
         }
 
         setVoiceTransitioning(true);
-        try {
-            // Call backend to stop the P2P session
-            await invoke('leave_room');
-        } catch (e) {
-            console.error("Failed to leave room:", e);
+
+        // Stop screen sharing if active
+        if (webrtc.isScreenSharing) {
+            webrtc.stopScreenShare();
         }
+
+        // Leave WebRTC room
+        webrtc.leaveRoom();
 
         // Update UI state
         setConnectedVoiceChannel(null);
         setConnectionStatus(false);
-        clearPeers();
 
-        // Allow next operation after delay
         setTimeout(() => setVoiceTransitioning(false), 1000);
     };
 
+    // Build participants list from WebRTC
     const participants = [
-        { id: 'me', name: 'Me', isLocal: true },
-        ...connectedPeers.map(id => ({ id, name: `User ${id.slice(0, 4)}`, isLocal: false }))
+        { id: webrtc.myId || 'me', name: 'Me', isLocal: true },
+        ...Array.from(webrtc.participants.keys()).map(id => ({
+            id,
+            name: webrtc.participants.get(id)?.name || `User ${id.slice(0, 4)}`,
+            isLocal: false
+        }))
     ];
+
+    const [focusedPeerId, setFocusedPeerId] = useState<string | null>(null);
+
+    // Auto-focus logic: If a new video stream appears, focus it.
+    // Also unfocus if the focused peer disconnects or stops video.
+    useEffect(() => {
+        // Detect new screen shares (or any video)
+        webrtc.remoteStreams.forEach((stream, peerId) => {
+            const videoTrack = stream.getVideoTracks()[0];
+            const hasActiveVideo = videoTrack && videoTrack.readyState === 'live' && !videoTrack.muted;
+
+            // If we have ACTIVE video and nobody is focused, or we want to prioritize new shares...
+            // Simple logic: Focus if having video and current focus is null.
+            if (hasActiveVideo && focusedPeerId === null) {
+                setFocusedPeerId(peerId);
+            }
+        });
+
+        // Check if focused peer is still valid and has video (optional, keeping focus on avatar is also fine)
+        if (focusedPeerId) {
+            if (focusedPeerId !== 'me') {
+                const stream = webrtc.remoteStreams.get(focusedPeerId);
+                const videoTrack = stream?.getVideoTracks()[0];
+                // Unfocus if:
+                // 1. Stream is missing
+                // 2. No video tracks
+                // 3. Video track is not live (ended)
+                // 4. Video track is muted
+                const isActive = videoTrack && videoTrack.readyState === 'live' && !videoTrack.muted;
+
+                if (!isActive) {
+                    setFocusedPeerId(null);
+                }
+            }
+        }
+    }, [webrtc.remoteStreams, webrtc.participants, focusedPeerId]);
+
+    const isFocusedMode = !!focusedPeerId;
+    // Find the participant object for the focused peer
+    const focusedParticipant = participants.find(p => p.id === focusedPeerId);
 
     return (
         <div className="flex-1 flex flex-col bg-[#0a0a12] overflow-hidden relative z-10">
+            {/* Remote Audio Playback (invisible) */}
+            <RemoteAudioPlayer streams={webrtc.remoteStreams} />
+
             {/* Background Effects */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
                 <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-cyan-500/5 rounded-full blur-[120px]"></div>
@@ -181,30 +331,70 @@ export function VoiceLayout({
             <div className="flex-1 flex overflow-hidden z-10 relative">
                 {/* Voice Grid (Left) */}
                 <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr">
-                        {participants.map(p => {
-                            // Determine speaking state
-                            const isSpeaking = p.isLocal
-                                ? localSpeaking
-                                : remoteSpeakers[p.id] || false;
+                    {isFocusedMode && focusedParticipant ? (
+                        <div className="flex flex-col h-full gap-4">
+                            {/* Main Focused View */}
+                            <div className="flex-1 min-h-0 bg-black/40 rounded-xl overflow-hidden relative border border-white/10 shadow-2xl">
+                                <GridItem
+                                    key={focusedParticipant.id}
+                                    clientId={focusedParticipant.id}
+                                    label={focusedParticipant.name}
+                                    isLocal={focusedParticipant.isLocal}
+                                    isSpeaking={focusedParticipant.isLocal ? webrtc.isSpeaking : webrtc.remoteSpeakingStates.get(focusedParticipant.id)}
+                                    videoStream={focusedParticipant.isLocal ? undefined : webrtc.remoteStreams.get(focusedParticipant.id)}
+                                    onClick={() => setFocusedPeerId(null)} // Click to unfocus
+                                />
+                                <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs font-bold text-white pointer-events-none">
+                                    FOCUSED VIEW
+                                </div>
+                            </div>
 
-                            return (
+                            {/* Filmstrip (Other participants) */}
+                            <div className="h-40 flex gap-4 overflow-x-auto p-2 min-h-[160px]">
+                                {webrtc.localStream && webrtc.isScreenSharing && (
+                                    <div className="w-64 flex-shrink-0 relative aspect-video glass-card border border-white/5">
+                                        <ScreenSharePreview stream={webrtc.localStream} />
+                                    </div>
+                                )}
+
+                                {participants.filter(p => p.id !== focusedPeerId).map(p => (
+                                    <div key={p.id} className="w-64 flex-shrink-0">
+                                        <GridItem
+                                            clientId={p.id}
+                                            label={p.name}
+                                            isLocal={p.isLocal}
+                                            isSpeaking={p.isLocal ? webrtc.isSpeaking : webrtc.remoteSpeakingStates.get(p.id)}
+                                            videoStream={p.isLocal ? undefined : webrtc.remoteStreams.get(p.id)}
+                                            onClick={() => setFocusedPeerId(p.id)} // Switch focus
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 auto-rows-fr">
+                            {/* Screen Share Preview (if sharing) */}
+                            {webrtc.localStream && webrtc.isScreenSharing && <ScreenSharePreview stream={webrtc.localStream} />}
+
+                            {participants.map(p => (
                                 <GridItem
                                     key={p.id}
                                     clientId={p.id}
                                     label={p.name}
                                     isLocal={p.isLocal}
-                                    isSpeaking={isSpeaking}
+                                    isSpeaking={p.isLocal ? webrtc.isSpeaking : webrtc.remoteSpeakingStates.get(p.id)}
+                                    videoStream={p.isLocal ? undefined : webrtc.remoteStreams.get(p.id)}
+                                    onClick={() => setFocusedPeerId(p.id)} // Enable focus
                                 />
-                            );
-                        })}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Chat Panel (Right) - Reusing ChannelChat */}
                 <div className="w-96 border-l border-white/10 bg-black/40 flex flex-col">
                     <ChannelChat
-                        status={isConnected ? "Connected" : "Disconnected"}
+                        status={webrtc.isConnected ? "Connected" : "Disconnected"}
                         selectedChannel={connectedVoiceChannelId}
                         channelName="Voice Chat"
                         channels={[]} // Not needed contextually for voice chat list
@@ -230,17 +420,26 @@ export function VoiceLayout({
             </div>
 
             {/* Controls */}
-            <div className="h-24 bg-black/40 backdrop-blur-md border-t border-white/10 px-8 flex items-center justify-center gap-6 z-20">
+            <div className="h-24 bg-black/40 backdrop-blur-md border-t border-white/10 px-8 flex items-center justify-center gap-6 z-20 relative">
+
+                {/* Quality Settings Panel (Absolute positioned above) */}
+                <div className="absolute bottom-28 left-8 z-30 w-80">
+                    <QualitySettings
+                        config={qualityConfig}
+                        onChange={handleQualityChange}
+                        disabled={webrtc.isScreenSharing}
+                    />
+                </div>
                 {/* Mute Toggle */}
                 <button
                     onClick={handleToggleMute}
-                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${isMuted
+                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${webrtc.isMuted
                         ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
                         : 'bg-white/5 border border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
                         }`}
-                    title={isMuted ? "Unmute" : "Mute"}
+                    title={webrtc.isMuted ? "Unmute" : "Mute"}
                 >
-                    {isMuted ? (
+                    {webrtc.isMuted ? (
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
@@ -255,11 +454,11 @@ export function VoiceLayout({
                 {/* Screen Share Toggle */}
                 <button
                     onClick={handleToggleScreenShare}
-                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${isScreenSharing
+                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${webrtc.isScreenSharing
                         ? 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30'
                         : 'bg-white/5 border border-white/10 text-gray-400 hover:text-white hover:bg-white/10'
                         }`}
-                    title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
+                    title={webrtc.isScreenSharing ? "Stop Sharing" : "Share Screen"}
                 >
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />

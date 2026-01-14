@@ -11,6 +11,7 @@ interface SessionState {
     isMicEnabled: boolean;
     isMuted: boolean;
     localSpeaking: boolean;
+    localScreenStream: MediaStream | null;
 
     // Actions
     setCurrentGuild: (guildId: string | null) => void;
@@ -19,6 +20,7 @@ interface SessionState {
     setConnectionStatus: (isConnected: boolean) => void;
     setMediaStatus: (status: Partial<{ isScreenSharing: boolean, isMicEnabled: boolean, isMuted: boolean }>) => void;
     setLocalSpeaking: (isSpeaking: boolean) => void;
+    setLocalScreenStream: (stream: MediaStream | null) => void;
 
     // Remote VAD
     remoteSpeakers: Record<string, boolean>;
@@ -45,6 +47,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     isMicEnabled: false,
     isMuted: false,
     localSpeaking: false,
+    localScreenStream: null,
 
     setCurrentGuild: (guildId) => set({ currentGuildId: guildId }),
     setCurrentChannel: (channelId) => set({ currentChannelId: channelId }),
@@ -52,6 +55,7 @@ export const useSessionStore = create<SessionState>((set) => ({
     setConnectionStatus: (isConnected) => set({ isConnected }),
     setMediaStatus: (status) => set((state) => ({ ...state, ...status })),
     setLocalSpeaking: (isSpeaking) => set({ localSpeaking: isSpeaking }),
+    setLocalScreenStream: (stream) => set({ localScreenStream: stream }),
 
     remoteSpeakers: {},
     setRemoteSpeaker: (clientId, isSpeaking) => set((state) => ({

@@ -98,15 +98,20 @@ async fn connect_to_gateway(app: &AppHandle, token: &str) -> Result<(), String> 
                     0 => { // Dispatch
                         let t = v["t"].as_str().unwrap_or("");
                         if t == "MESSAGE_CREATE" {
-                             if let Ok(m) = serde_json::from_value::<crate::services::models::SimpleMessage>(map_message(&v["d"])) {
-                                 // DBに保存
-                                 if let Some(db_state) = app.try_state::<crate::store::DatabaseState>() {
-                                     if let Ok(conn) = db_state.conn.lock() {
-                                         let _ = crate::store::save_message(&conn, &m);
-                                     }
-                                 }
-                                 let _ = app.emit("message_create", m);
-                             }
+                            match serde_json::from_value::<crate::services::models::SimpleMessage>(map_message(&v["d"])) {
+                                Ok(m) => {
+                                    // DBに保存
+                                    if let Some(db_state) = app.try_state::<crate::store::DatabaseState>() {
+                                        if let Ok(conn) = db_state.conn.lock() {
+                                            let _ = crate::store::save_message(&conn, &m);
+                                        }
+                                    }
+                                    let _ = app.emit("message_create", m);
+                                },
+                                Err(e) => {
+                                    println!("[Gateway] Failed to parse message: {:?}", e);
+                                }
+                            }
                         }
                     },
                     _ => {}
@@ -125,6 +130,7 @@ async fn connect_to_gateway(app: &AppHandle, token: &str) -> Result<(), String> 
 fn map_message(d: &Value) -> Value {
     // This helper maps raw Gateway Dispatch JSON to SimpleMessage JSON structure 
     let author_name = d["author"]["username"].as_str().unwrap_or("Unknown").to_string();
+    let author_id = d["author"]["id"].as_str().unwrap_or("").to_string();
     let embeds = d.get("embeds").unwrap_or(&serde_json::json!([])).clone();
     let attachments = d.get("attachments").unwrap_or(&serde_json::json!([])).clone();
     let guild_id = d["guild_id"].as_str().unwrap_or("").to_string();
@@ -135,6 +141,7 @@ fn map_message(d: &Value) -> Value {
         "channel_id": d["channel_id"],
         "content": d["content"],
         "author": author_name,
+        "author_id": author_id,
         "timestamp": d["timestamp"],
         "embeds": embeds,
         "attachments": attachments

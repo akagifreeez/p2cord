@@ -7,7 +7,6 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useWebRTC } from '../hooks/useWebRTC';
-import { ChatPanel } from './ChatPanel';
 
 // ビデオグリッドアイテム
 function VideoGridItem({
@@ -69,8 +68,8 @@ export function RoomView({ onLeave, signalingUrl, turnConfig }: { onLeave: () =>
         startScreenShare,
         stopScreenShare,
         isScreenSharing,
-        chatMessages,
-        sendChatMessage,
+        chatMessages: _chatMessages,
+        sendChatMessage: _sendChatMessage,
         // Microphone
         startMicrophone,
         stopMicrophone,
@@ -368,14 +367,9 @@ export function RoomView({ onLeave, signalingUrl, turnConfig }: { onLeave: () =>
 
                     {/* Chat Panel (Integrated) */}
                     <div className="h-1/2 min-h-[300px] border-t border-white/5 relative">
-                        <div className="absolute inset-0">
-                            <ChatPanel
-                                messages={chatMessages}
-                                onSendMessage={sendChatMessage}
-                                isConnected={isConnected}
-                                myId={myId}
-                                className="h-full !rounded-none !bg-transparent border-none"
-                            />
+                        <div className="absolute inset-0 flex items-center justify-center text-gray-500">
+                            {/* ChatPanel removed - RoomView is legacy */}
+                            <span>Chat (Legacy)</span>
                         </div>
                     </div>
                 </div>
