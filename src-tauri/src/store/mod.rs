@@ -157,6 +157,9 @@ pub fn get_cached_messages(
             
             messages.push(SimpleMessage {
                 id, guild_id: g_id, channel_id: ch_id, content, author, author_id, timestamp, embeds, attachments,
+                referenced_message: None,
+                message_snapshots: vec![],
+                kind: "Default".to_string(),
             });
         }
     } else {
@@ -184,6 +187,9 @@ pub fn get_cached_messages(
             
             messages.push(SimpleMessage {
                 id, guild_id: g_id, channel_id: ch_id, content, author, author_id, timestamp, embeds, attachments,
+                referenced_message: None,
+                message_snapshots: vec![],
+                kind: "Default".to_string(),
             });
         }
     }
@@ -240,6 +246,9 @@ pub fn search_messages(
             timestamp,
             embeds,
             attachments,
+            referenced_message: None,
+            message_snapshots: vec![],
+            kind: "Default".to_string(),
         });
     }
 

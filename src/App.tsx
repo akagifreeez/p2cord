@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { VoiceLayout } from './components/VoiceLayout';
 import { ChannelChat } from './components/ChannelChat';
+import { MemberSidebar, SimpleRole, MemberWithPresence } from './components/MemberSidebar';
 import { useWebRTC } from './hooks/useWebRTC';
 
 interface Guild {
@@ -17,6 +18,7 @@ interface Channel {
     name: string;
     kind: string;
     parent_id?: string;
+    position: number;
     last_message_id?: string;
 }
 
@@ -49,10 +51,25 @@ interface Message {
     timestamp: string;
     embeds: Embed[];
     attachments: Attachment[];
+    referenced_message?: Message;
+    message_snapshots?: MessageSnapshot[];
+    kind: string;
+}
+
+export interface MessageSnapshot {
+    message: {
+        content: string;
+        author: string;
+        timestamp: string;
+        embeds: Embed[];
+        attachments: Attachment[];
+    }
 }
 
 interface SimpleMessage {
     id: string;
+    guild_id: string;
+    channel_id: string;
     author_id: string;
     author: string; // Correct field name from Rust
     // author_avatar: string; // Rust definition doesn't seem to have this?
@@ -60,7 +77,20 @@ interface SimpleMessage {
     timestamp: string;
     embeds: Embed[];
     attachments: Attachment[]; // Rust sends Vec<DiscordAttachment> objects, not string
+    referenced_message?: SimpleMessage | null;
+    message_snapshots?: MessageSnapshot[];
+    kind: string;
 }
+
+type UserStatus = 'online' | 'idle' | 'dnd' | 'invisible';
+
+const STATUS_CONFIG: Record<UserStatus, { label: string, color: string, indicatorColor: string }> = {
+    online: { label: 'Online', color: 'text-green-500', indicatorColor: 'bg-green-500' },
+    idle: { label: 'Idle', color: 'text-yellow-500', indicatorColor: 'bg-yellow-500' },
+    dnd: { label: 'Do Not Disturb', color: 'text-red-500', indicatorColor: 'bg-red-500' },
+    invisible: { label: 'Invisible', color: 'text-gray-500', indicatorColor: 'bg-gray-500' },
+};
+
 
 function App() {
 
@@ -83,7 +113,22 @@ function App() {
                     author_id: msg.author_id,
                     timestamp: msg.timestamp,
                     embeds: msg.embeds || [],
-                    attachments: msg.attachments || []
+                    attachments: msg.attachments || [],
+                    referenced_message: msg.referenced_message ? {
+                        id: msg.referenced_message.id,
+                        guild_id: msg.referenced_message.guild_id || "",
+                        channel_id: msg.referenced_message.channel_id,
+                        content: msg.referenced_message.content,
+                        author: msg.referenced_message.author,
+                        author_id: msg.referenced_message.author_id,
+                        timestamp: msg.referenced_message.timestamp,
+                        embeds: msg.referenced_message.embeds || [],
+                        attachments: msg.referenced_message.attachments || [],
+                        referenced_message: undefined, // Avoid infinite recursion
+                        kind: msg.referenced_message.kind || 'Default'
+                    } : undefined,
+                    message_snapshots: msg.message_snapshots || [],
+                    kind: msg.kind || 'Default'
                 };
 
                 setMessages(prev => {
@@ -93,13 +138,23 @@ function App() {
             }
         });
 
+        const unlistenDeletePromise = listen<{ id: string, channel_id: string, guild_id: string }>('message_delete', (event) => {
+            const { id, channel_id } = event.payload;
+            console.log("[App] Message Deleted:", id);
+            if (selectedChannelRef.current === channel_id) {
+                setMessages(prev => prev.filter(m => m.id !== id));
+            }
+        });
+
         return () => {
             unlistenPromise.then(unlisten => unlisten());
+            unlistenDeletePromise.then(unlisten => unlisten());
         };
     }, []);
 
     const [token, setToken] = useState('');
     const [myId, setMyId] = useState<string | null>(null); // Logged-in User ID
+    const [myUser, setMyUser] = useState<{ username: string, discriminator: string, avatar: string | null } | null>(null);
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [status, setStatus] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
@@ -148,6 +203,108 @@ function App() {
     const [isLoadingChannel, setIsLoadingChannel] = useState(false);
     // const [isSwitchingChannel, setIsSwitchingChannel] = useState(false); // Removed masking logic
     const fetchIdRef = useRef(0); // フェッチバージョン管理用
+    const hasMoreRef = useRef(true); // 追加読み込み可能かどうかのフラグ
+
+    // Collapsed Categories State
+    const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+    // User Status State
+    const [userStatus, setUserStatus] = useState<UserStatus>('online');
+    const [isStatusMenuOpen, setIsStatusMenuOpen] = useState(false);
+    const statusMenuRef = useRef<HTMLDivElement>(null);
+
+    // Members & Roles State
+    const [roles, setRoles] = useState<SimpleRole[]>([]);
+    const [members, setMembers] = useState<MemberWithPresence[]>([]);
+    const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+    const [showMemberSidebar] = useState(true);
+
+    const fetchGuildData = async (guildId: string) => {
+        console.log(`[App] Fetching guild data for ${guildId}`);
+        setIsLoadingMembers(true);
+        try {
+            // ロールはREST APIで取得可能
+            const fetchedRoles = await invoke<SimpleRole[]>('get_roles', { guildId });
+            console.log(`[App] Fetched ${fetchedRoles.length} roles.`);
+            setRoles(fetchedRoles);
+
+            // メンバーはGatewayストアから取得（Gateway経由で随時更新される）
+            const storedMembers = await invoke<MemberWithPresence[]>('get_guild_members_from_store', { guildId });
+            console.log(`[App] Got ${storedMembers.length} members from store.`);
+            setMembers(storedMembers);
+        } catch (e) {
+            console.error("Failed to fetch guild data:", e);
+            setStatus(`Guild Data Error: ${e}`);
+        } finally {
+            setIsLoadingMembers(false);
+        }
+    };
+
+    // メインバーリスト購読（チャンネル選択時）
+    const subscribeToMemberList = async (guildId: string, channelId: string) => {
+        try {
+            await invoke('subscribe_member_list', { guildId, channelId });
+            console.log(`[App] Subscribed to member list for guild: ${guildId}, channel: ${channelId}`);
+        } catch (e) {
+            console.error("Failed to subscribe to member list:", e);
+        }
+    };
+
+    // Gateway イベントリスナー: メンバーリスト更新時にストアからリフレッシュ
+    useEffect(() => {
+        const unlistenMemberList = listen('member_list_update', async (event: any) => {
+            const { guild_id, member_count, online_count } = event.payload;
+            console.log(`[App] Member list update: guild=${guild_id}, members=${member_count}, online=${online_count}`);
+
+            // 現在のギルドの場合、メンバーリストを更新
+            if (guild_id === selectedGuild) {
+                const storedMembers = await invoke<MemberWithPresence[]>('get_guild_members_from_store', { guildId: guild_id });
+                setMembers(storedMembers);
+            }
+        });
+
+        const unlistenPresence = listen('presence_update', async (event: any) => {
+            const { user_id, guild_id, status } = event.payload;
+            console.log(`[App] Presence update: user=${user_id}, guild=${guild_id}, status=${status}`);
+
+            // 現在のギルドの場合、メンバーリストを更新
+            if (guild_id === selectedGuild) {
+                const storedMembers = await invoke<MemberWithPresence[]>('get_guild_members_from_store', { guildId: guild_id });
+                setMembers(storedMembers);
+            }
+        });
+
+        return () => {
+            unlistenMemberList.then(unlisten => unlisten());
+            unlistenPresence.then(unlisten => unlisten());
+        };
+    }, [selectedGuild]);
+
+
+    // Close status menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (statusMenuRef.current && !statusMenuRef.current.contains(event.target as Node)) {
+                setIsStatusMenuOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
+
+    const toggleCategory = (categoryId: string) => {
+        setCollapsedCategories(prev => {
+            const next = new Set(prev);
+            if (next.has(categoryId)) {
+                next.delete(categoryId);
+            } else {
+                next.add(categoryId);
+            }
+            return next;
+        });
+    };
 
     // Audio State
     const [isMuted, setIsMuted] = useState(false);
@@ -258,9 +415,16 @@ function App() {
     const handleLoginWithToken = async (tokenToUse: string) => {
         try {
             // Updated to expect LoginResponse object
-            const res = await invoke<{ message: string, user_id: string, username: string }>('init_client', { token: tokenToUse });
+            const res = await invoke<{
+                message: string,
+                user_id: string,
+                username: string,
+                discriminator: string,
+                avatar: string | null
+            }>('init_client', { token: tokenToUse });
             setStatus(res.message);
             setMyId(res.user_id);
+            setMyUser({ username: res.username, discriminator: res.discriminator, avatar: res.avatar });
             setIsLoggedIn(true);
             localStorage.setItem('discord_token', tokenToUse); // Save on success
             fetchGuilds();
@@ -314,7 +478,8 @@ function App() {
         setMessages([]);
         try {
             const res = await invoke<Channel[]>('get_channels', { guildId });
-            setChannels(res.sort((a, b) => a.kind.localeCompare(b.kind)));
+            setChannels(res);
+            fetchGuildData(guildId); // Fetch members/roles when guild changes
         } catch (e) {
             setStatus(`Error fetching channels: ${e}`);
         }
@@ -340,6 +505,11 @@ function App() {
             setSearchResults(null);
             setShowScrollButton(false);
 
+            // Gateway OP 14: Subscribe to member list for this channel
+            if (selectedGuild) {
+                subscribeToMemberList(selectedGuild, channelId);
+            }
+
             if (isVoice) {
                 // Prevent duplicate join if already in this voice channel
                 if (channelId === connectedVoiceChannelId) {
@@ -357,7 +527,9 @@ function App() {
                 console.log("Joining Voice Channel:", channelId);
                 setVoiceTransitioning(true);
                 setConnectedVoiceChannel(channelId);
+                setConnectedVoiceChannel(channelId);
                 setMessages([]);
+                hasMoreRef.current = true;
                 setIsLoadingChannel(false);
 
                 try {
@@ -404,6 +576,20 @@ function App() {
                         channel_id: channelId,
                         embeds: m.embeds || [],
                         attachments: m.attachments || [], // Fixed: no JSON.parse needed
+                        referenced_message: m.referenced_message ? {
+                            id: m.referenced_message.id,
+                            guild_id: m.referenced_message.guild_id || "",
+                            channel_id: m.referenced_message.channel_id,
+                            content: m.referenced_message.content,
+                            author: m.referenced_message.author,
+                            author_id: m.referenced_message.author_id,
+                            timestamp: m.referenced_message.timestamp,
+                            embeds: m.referenced_message.embeds || [],
+                            attachments: m.referenced_message.attachments || [],
+                            kind: m.referenced_message.kind || 'Default'
+                        } : undefined,
+                        message_snapshots: m.message_snapshots || [],
+                        kind: m.kind || 'Default'
                     }));
 
                     if (currentFetchId === fetchIdRef.current) {
@@ -422,7 +608,9 @@ function App() {
 
             // TEXT: Only fetch messages, DO NOT touch P2P
             // setIsSwitchingChannel(true);
+            // setIsSwitchingChannel(true);
             setMessages([]);
+            hasMoreRef.current = true;
             setIsLoadingChannel(true);
 
             // 1. Cache
@@ -460,7 +648,25 @@ function App() {
                     channel_id: channelId,
                     embeds: m.embeds || [],
                     attachments: m.attachments || [],
+                    referenced_message: m.referenced_message ? {
+                        id: m.referenced_message.id,
+                        guild_id: m.referenced_message.guild_id || "",
+                        channel_id: m.referenced_message.channel_id,
+                        content: m.referenced_message.content,
+                        author: m.referenced_message.author,
+                        author_id: m.referenced_message.author_id,
+                        timestamp: m.referenced_message.timestamp,
+                        embeds: m.referenced_message.embeds || [],
+                        attachments: m.referenced_message.attachments || [],
+                        kind: m.referenced_message.kind || 'Default'
+                    } : undefined,
+                    message_snapshots: m.message_snapshots || [],
+                    kind: m.kind || 'Default'
                 }));
+
+                if (fetchedMsgs.length === 0) {
+                    hasMoreRef.current = false;
+                }
 
                 if (currentFetchId !== fetchIdRef.current) {
                     console.log("[App] Fetch ID mismatch, ignoring result");
@@ -468,8 +674,13 @@ function App() {
                 }
 
                 setMessages(prev => {
-                    if (beforeId) return [...prev, ...mapped.reverse()]; // Load more (top)
-                    return mapped.reverse(); // Initial load
+                    const allMessages = beforeId ? [...prev, ...mapped] : mapped;
+                    const uniqueMap = new Map();
+                    allMessages.forEach(m => uniqueMap.set(m.id, m));
+                    const uniqueMessages = Array.from(uniqueMap.values()) as Message[];
+                    // Sort by timestamp (Oldest -> Newest)
+                    uniqueMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+                    return uniqueMessages;
                 });
 
             } catch (e) {
@@ -532,7 +743,7 @@ function App() {
 
 
     const loadOlderMessages = async () => {
-        if (isLoadingMore || !selectedChannel || messages.length === 0) return;
+        if (isLoadingMore || !selectedChannel || messages.length === 0 || !hasMoreRef.current) return;
         setIsLoadingMore(true);
         const oldestMessage = messages[0];
         await fetchMessages(selectedChannel, oldestMessage.id);
@@ -603,13 +814,14 @@ function App() {
         setIsSearching(false);
     };
 
-    const handleSendMessage = async (content: string) => {
+    const handleSendMessage = async (content: string, replyToId: string | null = null) => {
         if (!content.trim() || !selectedChannel || !selectedGuild) return;
         try {
             await invoke('send_message', {
                 guildId: selectedGuild,
                 channelId: selectedChannel,
-                content: content.trim()
+                content: content.trim(),
+                replyTo: replyToId
             });
             // Optimistic update or wait for event is fine. 
             // We listen to 'message_create' so it should appear automatically.
@@ -617,6 +829,10 @@ function App() {
             console.error("Failed to send message:", e);
             setStatus(`Send Error: ${e}`);
         }
+    };
+
+    const handleMessageDeleted = (messageId: string) => {
+        setMessages(prev => prev.filter(m => m.id !== messageId));
     };
 
     const clearSearch = () => {
@@ -693,7 +909,6 @@ function App() {
                         const channelMap: Record<string, Channel[]> = {}; // Category ID -> Channels
                         const threadMap: Record<string, Channel[]> = {};  // Channel ID -> Threads
                         const orphans: Channel[] = []; // Channels with no category
-
                         // Map Threads to Parents
                         threads.forEach(t => {
                             if (t.parent_id) {
@@ -755,21 +970,51 @@ function App() {
                             </div>
                         );
 
+                        // Helper to determine sort order based on channel type (Text-like first, then Voice-like)
+                        const getChannelTypeOrder = (kind: string) => {
+                            // Text-like (Text, News, Forum, etc.) -> 0
+                            // Voice-like (Voice, Stage) -> 1
+                            if (['Voice', 'Stage'].includes(kind)) return 1;
+                            return 0;
+                        };
+
+                        const sortChannels = (channels: Channel[]) => {
+                            return channels.sort((a, b) => {
+                                // 1. Sort by Type Group (Text-like vs Voice-like)
+                                const typeA = getChannelTypeOrder(a.kind);
+                                const typeB = getChannelTypeOrder(b.kind);
+                                if (typeA !== typeB) return typeA - typeB;
+
+                                // 2. Sort by Position
+                                const posDiff = a.position - b.position;
+                                if (posDiff !== 0) return posDiff;
+
+                                // 3. Fallback to Name
+                                return a.name.localeCompare(b.name);
+                            });
+                        };
+
                         return (
                             <div className="space-y-4">
                                 {orphans.length > 0 && (
                                     <div className="space-y-1">
-                                        {orphans.map(c => renderChannelItem(c))}
+                                        {sortChannels(orphans).map(c => renderChannelItem(c))}
                                     </div>
                                 )}
-                                {categories.sort((a, b) => (Number(a.id) - Number(b.id))).map(cat => (
+                                {categories.sort((a, b) => a.position - b.position).map(cat => (
                                     <div key={cat.id}>
-                                        <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 px-1 hover:text-gray-300">
+                                        <div
+                                            className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 px-1 hover:text-gray-300 cursor-pointer flex items-center gap-1 select-none"
+                                            onClick={() => toggleCategory(cat.id)}
+                                        >
+                                            <svg className={`w-3 h-3 transition-transform ${collapsedCategories.has(cat.id) ? '-rotate-90' : 'rotate-0'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                             {cat.name}
                                         </div>
-                                        <div className="space-y-1">
-                                            {channelMap[cat.id]?.map(c => renderChannelItem(c))}
-                                        </div>
+                                        {!collapsedCategories.has(cat.id) && (
+                                            <div className="space-y-1">
+                                                {sortChannels(channelMap[cat.id] || []).map(c => renderChannelItem(c))}
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -808,22 +1053,67 @@ function App() {
                 )}
 
                 {/* User Area */}
-                <div className="bg-[#050505] p-2 flex items-center gap-2 border-t border-gray-800">
-                    <div className="relative group cursor-pointer">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border transition-all duration-200 ${localSpeaking
-                            ? 'bg-green-500/20 text-green-400 border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]'
-                            : 'bg-terminal-green/20 text-terminal-green border-terminal-green/30'
-                            }`}>
-                            {localSpeaking && (
-                                <div className="absolute inset-0 rounded-full border-2 border-green-500 animate-ping opacity-75"></div>
-                            )}
-                            P
+                <div className="bg-[#050505] p-2 flex items-center gap-2 border-t border-gray-800 relative">
+                    {/* Status Menu Popup */}
+                    {isStatusMenuOpen && (
+                        <div
+                            ref={statusMenuRef}
+                            className="absolute bottom-14 left-2 w-56 bg-[#111] border border-gray-800 rounded-lg shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-100"
+                        >
+                            <div className="p-1 space-y-0.5">
+                                {(Object.keys(STATUS_CONFIG) as UserStatus[]).map((status) => (
+                                    <div
+                                        key={status}
+                                        onClick={() => {
+                                            setUserStatus(status);
+                                            setIsStatusMenuOpen(false);
+                                            // Call backend to update Discord presence
+                                            invoke('update_status', { status })
+                                                .catch(e => console.error("Failed to update status:", e));
+                                        }}
+                                        className="flex items-center gap-3 px-2 py-1.5 rounded hover:bg-white/10 cursor-pointer group"
+                                    >
+                                        <div className={`w-3 h-3 rounded-full ${STATUS_CONFIG[status].indicatorColor} border border-black/50`}></div>
+                                        <span className={`text-sm font-medium ${status === userStatus ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}`}>
+                                            {STATUS_CONFIG[status].label}
+                                        </span>
+                                        {status === userStatus && (
+                                            <svg className="w-3 h-3 text-white ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         </div>
-                        <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-black rounded-full"></div>
+                    )}
+
+                    <div
+                        className="relative group cursor-pointer"
+                        onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
+                    >
+                        {myUser?.avatar ? (
+                            <img src={myUser.avatar} alt="Profile" className={`w-8 h-8 rounded-full object-cover border transition-all duration-200 ${localSpeaking
+                                ? 'border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]'
+                                : 'border-gray-800'
+                                }`} />
+                        ) : (
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border transition-all duration-200 ${localSpeaking
+                                ? 'bg-green-500/20 text-green-400 border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]'
+                                : 'bg-terminal-green/20 text-terminal-green border-terminal-green/30'
+                                }`}>
+                                {(myUser?.username || "P")[0].toUpperCase()}
+                            </div>
+                        )}
+                        {localSpeaking && (
+                            <div className="absolute inset-0 rounded-full border-2 border-green-500 animate-ping opacity-75 pointer-events-none"></div>
+                        )}
+                        <div className={`absolute bottom-0 right-0 w-3 h-3 ${STATUS_CONFIG[userStatus].indicatorColor} border-2 border-[#050505] rounded-full`}></div>
                     </div>
-                    <div className="flex-1 min-w-0 pointer-events-none">
-                        <div className="text-xs font-bold text-white truncate">Player</div>
-                        <div className="text-[10px] text-gray-500 truncate">Online</div>
+                    <div
+                        className="flex-1 min-w-0 cursor-pointer hover:bg-white/5 rounded px-1 -ml-1 py-0.5 transition-colors"
+                        onClick={() => setIsStatusMenuOpen(!isStatusMenuOpen)}
+                    >
+                        <div className="text-xs font-bold text-white truncate">{myUser?.username || "Player"}</div>
+                        <div className="text-[10px] text-gray-500 truncate">{STATUS_CONFIG[userStatus].label}</div>
                     </div>
                     <div className="flex items-center gap-1">
                         <button
@@ -869,6 +1159,7 @@ function App() {
                     webrtc={webrtc}
                     messages={messages as any} // Cast might be needed due to local interface definition
                     onSendMessage={handleSendMessage}
+                    onMessageDelete={handleMessageDeleted}
                     myId={myId}
 
                     isLoadingMore={isLoadingMore}
@@ -914,7 +1205,7 @@ function App() {
                 </div>
             ) : (
                 <ChannelChat
-                    status={status}
+                    status={'' /* エラー表示を無効化 */}
                     selectedChannel={selectedChannel}
                     channelName={channels.find(c => c.id === selectedChannel)?.name}
                     channels={channels as any} // Cast to compatible type
@@ -930,6 +1221,7 @@ function App() {
                     handleSearch={handleSearch}
                     clearSearch={clearSearch}
                     handleSendMessage={handleSendMessage}
+                    onMessageDelete={handleMessageDeleted}
                     scrollToBottom={scrollToBottom}
                     handleMessagesScroll={handleMessagesScroll}
 
@@ -937,6 +1229,12 @@ function App() {
                     messagesEndRef={messagesEndRef}
                 />
             )}
+
+            {/* Right Sidebar: Member List */}
+            {selectedGuild && showMemberSidebar && (
+                <MemberSidebar members={members} roles={roles} loading={isLoadingMembers} />
+            )}
+
         </div>
     );
 }

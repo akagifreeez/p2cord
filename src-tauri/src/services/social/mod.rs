@@ -1,6 +1,7 @@
 use crate::services::models::{
-    DiscordGuild, DiscordChannel, DiscordMessage, 
-    SimpleGuild, SimpleChannel, SimpleMessage
+    DiscordGuild, DiscordChannel, DiscordMessage, DiscordRole, DiscordMember,
+    SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember,
+    MessageSnapshot, SimpleMessageSnapshotData, DiscordUser
 };
 use reqwest::Client;
 
@@ -19,6 +20,22 @@ fn map_channel_type(kind: u8) -> String {
         12 => "PrivateThread".to_string(),
         15 => "Forum".to_string(),
         _ => format!("Type({})", kind),
+    }
+}
+
+fn map_message_type(kind: u8) -> String {
+    match kind {
+        0 | 19 => "Default".to_string(),
+        6 => "ChannelPinnedMessage".to_string(),
+        7 => "UserJoin".to_string(),
+        8 => "GuildBoost".to_string(),
+        9 => "GuildBoostTier1".to_string(),
+        10 => "GuildBoostTier2".to_string(),
+        11 => "GuildBoostTier3".to_string(),
+        12 => "ChannelFollowAdd".to_string(),
+        18 => "ThreadCreated".to_string(),
+        21 => "ThreadStarterMessage".to_string(),
+        _ => "Default".to_string(), // Treat others as normal messages for now
     }
 }
 
@@ -58,6 +75,7 @@ pub async fn fetch_channels(client: &Client, guild_id: String) -> Result<Vec<Sim
         name: c.name.unwrap_or_else(|| "Unknown".to_string()),
         kind: map_channel_type(c.kind),
         parent_id: c.parent_id,
+        position: c.position.unwrap_or(0),
         last_message_id: c.last_message_id,
     }).collect())
 }
@@ -86,6 +104,7 @@ pub async fn fetch_active_threads(client: &Client, guild_id: String) -> Result<V
                     name: c.name.unwrap_or_else(|| "Unknown Thread".to_string()),
                     kind: map_channel_type(c.kind),
                     parent_id: c.parent_id,
+                    position: c.position.unwrap_or(0),
                     last_message_id: c.last_message_id,
                 });
              } else {
@@ -121,6 +140,7 @@ pub async fn fetch_archived_threads(client: &Client, channel_id: String) -> Resu
                     name: c.name.unwrap_or_else(|| "Unknown Archived Thread".to_string()),
                     kind: map_channel_type(c.kind),
                     parent_id: Some(channel_id.clone()), // Explicitly link to parent
+                    position: c.position.unwrap_or(0),
                     last_message_id: c.last_message_id,
                 };
                 // Archived threads data sometimes misses parent_id or it's implied
@@ -169,6 +189,7 @@ pub async fn fetch_forum_active_threads(client: &Client, guild_id: String, chann
                         name: c.name.unwrap_or_else(|| "Unknown Thread".to_string()),
                         kind: map_channel_type(c.kind),
                         parent_id: Some(channel_id.clone()),
+                        position: c.position.unwrap_or(0),
                         last_message_id: c.last_message_id,
                     };
                     if channel.parent_id.is_none() {
@@ -186,6 +207,43 @@ pub async fn fetch_forum_active_threads(client: &Client, guild_id: String, chann
 
     println!("[fetch_forum_active_threads] Returning {} active threads", simple_channels.len());
     Ok(simple_channels)
+}
+
+pub async fn fetch_roles(client: &Client, guild_id: String) -> Result<Vec<SimpleRole>, String> {
+    let res = client.get(format!("{}/guilds/{}/roles", API_BASE, guild_id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("API Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    let roles: Vec<DiscordRole> = res.json().await.map_err(|e| e.to_string())?;
+
+    Ok(roles.into_iter().map(|r| SimpleRole {
+        id: r.id,
+        name: r.name,
+        color: r.color,
+        position: r.position,
+        hoist: r.hoist,
+    }).collect())
+}
+
+pub async fn fetch_members(client: &Client, guild_id: String) -> Result<Vec<SimpleMember>, String> {
+    // ユーザートークンではメンバー一覧APIにアクセスできない
+    // - /guilds/{guild_id}/members は Bot専用 (403 Missing Access)
+    // - /guilds/{guild_id}/members/search は検索用で空クエリ不可 (400)
+    // 
+    // 本来はGateway OP 14 (Lazy Request) を実装する必要があるが、
+    // 現状は空のリストを返し、将来的にGateway経由で実装する
+    // 
+    // TODO: Gateway経由でGUILD_MEMBER_LIST_UPDATEを処理してメンバーリストを構築
+    
+    println!("[fetch_members] User token limitation: cannot fetch member list via REST API. Guild: {}", guild_id);
+    
+    // 空のリストを返す（エラーにはしない）
+    Ok(vec![])
 }
 
 pub async fn fetch_messages(client: &Client, channel_id: String, before_id: Option<String>) -> Result<Vec<SimpleMessage>, String> {
@@ -227,6 +285,30 @@ pub async fn fetch_messages(client: &Client, channel_id: String, before_id: Opti
         timestamp: m.timestamp,
         embeds: m.embeds,
         attachments: m.attachments,
+        referenced_message: m.referenced_message.map(|rm| Box::new(SimpleMessage {
+            id: rm.id,
+            guild_id: "".to_string(), // Missing context
+            channel_id: rm.channel_id,
+            content: rm.content,
+            author: rm.author.username,
+            author_id: rm.author.id,
+            timestamp: rm.timestamp,
+            embeds: rm.embeds,
+            attachments: rm.attachments,
+            referenced_message: None, // Avoid infinite recursion
+            message_snapshots: vec![],
+            kind: map_message_type(rm.kind),
+        })),
+        message_snapshots: m.message_snapshots.unwrap_or_default().into_iter().map(|s| MessageSnapshot {
+            message: SimpleMessageSnapshotData {
+                content: s.message.content,
+                author: s.message.author.map(|a| a.username).unwrap_or_else(|| "Unknown".to_string()),
+                timestamp: s.message.timestamp,
+                embeds: s.message.embeds,
+                attachments: s.message.attachments,
+            }
+        }).collect(),
+        kind: map_message_type(m.kind),
     }).collect())
 }
 
@@ -257,13 +339,42 @@ pub async fn fetch_messages_with_guid(client: &Client, guild_id: String, channel
         timestamp: m.timestamp,
         embeds: m.embeds,
         attachments: m.attachments,
+        referenced_message: m.referenced_message.map(|rm| Box::new(SimpleMessage {
+            id: rm.id,
+            guild_id: guild_id.clone(),
+            channel_id: rm.channel_id,
+            content: rm.content,
+            author: rm.author.username,
+            author_id: rm.author.id,
+            timestamp: rm.timestamp,
+            embeds: rm.embeds,
+            attachments: rm.attachments,
+            referenced_message: None,
+            message_snapshots: vec![],
+            kind: map_message_type(rm.kind),
+        })),
+        message_snapshots: m.message_snapshots.unwrap_or_default().into_iter().map(|s| MessageSnapshot {
+            message: SimpleMessageSnapshotData {
+                content: s.message.content,
+                author: s.message.author.map(|a| a.username).unwrap_or_else(|| "Unknown".to_string()),
+                timestamp: s.message.timestamp,
+                embeds: s.message.embeds,
+                attachments: s.message.attachments,
+            }
+        }).collect(),
+        kind: map_message_type(m.kind),
     }).collect())
 }
 
-pub async fn send_message(client: &Client, guild_id: String, channel_id: String, content: String) -> Result<SimpleMessage, String> {
-    let map = serde_json::json!({
-        "content": content
-    });
+pub async fn send_message(client: &Client, guild_id: String, channel_id: String, content: String, reply_to: Option<String>) -> Result<SimpleMessage, String> {
+    let mut map = serde_json::Map::new();
+    map.insert("content".to_string(), serde_json::Value::String(content));
+
+    if let Some(reply_id) = reply_to {
+        let mut reference = serde_json::Map::new();
+        reference.insert("message_id".to_string(), serde_json::Value::String(reply_id));
+        map.insert("message_reference".to_string(), serde_json::Value::Object(reference));
+    }
 
     let res = client.post(format!("{}/channels/{}/messages", API_BASE, channel_id))
         .json(&map)
@@ -279,7 +390,7 @@ pub async fn send_message(client: &Client, guild_id: String, channel_id: String,
 
     Ok(SimpleMessage {
         id: m.id,
-        guild_id,
+        guild_id: guild_id.clone(),
         channel_id: m.channel_id,
         content: m.content,
         author: m.author.username,
@@ -287,7 +398,44 @@ pub async fn send_message(client: &Client, guild_id: String, channel_id: String,
         timestamp: m.timestamp,
         embeds: m.embeds,
         attachments: m.attachments,
+        referenced_message: m.referenced_message.map(|rm| Box::new(SimpleMessage {
+            id: rm.id,
+            guild_id: guild_id.clone(),
+            channel_id: rm.channel_id,
+            content: rm.content,
+            author: rm.author.username,
+            author_id: rm.author.id,
+            timestamp: rm.timestamp,
+            embeds: rm.embeds,
+            attachments: rm.attachments,
+            referenced_message: None,
+            message_snapshots: vec![],
+            kind: map_message_type(rm.kind),
+        })),
+        message_snapshots: m.message_snapshots.unwrap_or_default().into_iter().map(|s| MessageSnapshot {
+            message: SimpleMessageSnapshotData {
+                content: s.message.content,
+                author: s.message.author.map(|a| a.username).unwrap_or_else(|| "Unknown".to_string()),
+                timestamp: s.message.timestamp,
+                embeds: s.message.embeds,
+                attachments: s.message.attachments,
+            }
+        }).collect(),
+        kind: map_message_type(m.kind),
     })
+}
+
+pub async fn delete_message(client: &Client, channel_id: String, message_id: String) -> Result<(), String> {
+    let res = client.delete(format!("{}/channels/{}/messages/{}", API_BASE, channel_id, message_id))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("API Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    Ok(())
 }
 
 pub async fn search_discord(client: &Client, guild_id: String, query: String) -> Result<Vec<SimpleMessage>, String> {
@@ -325,6 +473,30 @@ pub async fn search_discord(client: &Client, guild_id: String, query: String) ->
                         timestamp: m.timestamp.clone(),
                         embeds: m.embeds.clone(),
                         attachments: m.attachments.clone(),
+                        referenced_message: m.referenced_message.as_ref().map(|rm| Box::new(SimpleMessage {
+                            id: rm.id.clone(),
+                            guild_id: guild_id.clone(),
+                            channel_id: rm.channel_id.clone(),
+                            content: rm.content.clone(),
+                            author: rm.author.username.clone(),
+                            author_id: rm.author.id.clone(),
+                            timestamp: rm.timestamp.clone(),
+                            embeds: rm.embeds.clone(),
+                            attachments: rm.attachments.clone(),
+                            referenced_message: None,
+                            message_snapshots: vec![],
+                            kind: map_message_type(rm.kind),
+                        })),
+                        message_snapshots: m.message_snapshots.unwrap_or_default().into_iter().map(|s| MessageSnapshot {
+                            message: SimpleMessageSnapshotData {
+                                content: s.message.content,
+                                author: s.message.author.map(|a| a.username).unwrap_or_else(|| "Unknown".to_string()),
+                                timestamp: s.message.timestamp,
+                                embeds: s.message.embeds,
+                                attachments: s.message.attachments,
+                            }
+                        }).collect(),
+                        kind: map_message_type(m.kind),
                     };
                     simple_messages.push(simple);
                 }

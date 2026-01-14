@@ -46,16 +46,23 @@ pub fn run() {
             bridge::identity::init_client,
             // Bridge: Social (Discord)
             bridge::social::get_guilds,
+            bridge::social::get_roles,
+            bridge::social::get_members,
             bridge::social::get_channels,
             bridge::social::get_messages,
             bridge::social::send_message,
+            bridge::social::delete_message,
             bridge::social::fetch_all_history,
             bridge::social::search_discord_api,
             bridge::social::get_archived_threads,
             bridge::social::get_forum_active_threads,
+            bridge::social::get_guild_members_from_store,
+            bridge::social::get_voice_states,
             
             // Gateway (moved to bridge as it is a controller)
             bridge::gateway::start_gateway,
+            bridge::gateway::update_status,
+            bridge::gateway::subscribe_member_list,
             
             // Bridge: Room (Unified)
             bridge::room::fetch_messages,
@@ -75,6 +82,14 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir().expect("Failed to get app data dir");
             let db_state = store::DatabaseState::new(app_data_dir).expect("Failed to initialize database");
             app.manage(db_state);
+
+            // Gateway状態の初期化
+            let gateway_sender = Arc::new(Mutex::new(None));
+            app.manage(bridge::gateway::GatewaySender(gateway_sender));
+
+            // Guild Member/Presence状態の初期化
+            let guild_state = services::guild_state::create_guild_state();
+            app.manage(guild_state);
 
             // クリップボード状態の初期化
             let clipboard_state = Arc::new(Mutex::new(String::new()));

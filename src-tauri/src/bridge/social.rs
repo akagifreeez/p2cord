@@ -1,5 +1,5 @@
 use tauri::State;
-use crate::services::models::{SimpleGuild, SimpleChannel, SimpleMessage};
+use crate::services::models::{SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember};
 use crate::services::state::DiscordState;
 use crate::services::social;
 use crate::store::DatabaseState as DbState; 
@@ -12,6 +12,58 @@ pub async fn get_guilds(state: State<'_, DiscordState>) -> Result<Vec<SimpleGuil
     };
 
     social::fetch_guilds(&client).await
+}
+
+#[tauri::command]
+pub async fn get_roles(guild_id: String, state: State<'_, DiscordState>) -> Result<Vec<SimpleRole>, String> {
+    println!("[get_roles] Called for guild: {}", guild_id);
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    let result = social::fetch_roles(&client, guild_id).await;
+    match &result {
+        Ok(roles) => println!("[get_roles] Fetched {} roles", roles.len()),
+        Err(e) => println!("[get_roles] Error: {}", e),
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn get_members(guild_id: String, state: State<'_, DiscordState>) -> Result<Vec<SimpleMember>, String> {
+    println!("[get_members] Called for guild: {}", guild_id);
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    let result = social::fetch_members(&client, guild_id).await;
+    match &result {
+        Ok(members) => println!("[get_members] Fetched {} members", members.len()),
+        Err(e) => println!("[get_members] Error: {}", e),
+    }
+    result
+}
+
+/// Gateway経由で収集したメンバー情報を取得（プレゼンス付き）
+#[tauri::command]
+pub fn get_guild_members_from_store(
+    guild_id: String, 
+    state: State<'_, crate::services::guild_state::GuildStateHandle>
+) -> Result<Vec<crate::services::models::MemberWithPresence>, String> {
+    let store = state.lock().map_err(|e| e.to_string())?;
+    Ok(store.get_members(&guild_id))
+}
+
+/// Gateway経由で収集したボイス状態を取得
+#[tauri::command]
+pub fn get_voice_states(
+    guild_id: String, 
+    state: State<'_, crate::services::guild_state::GuildStateHandle>
+) -> Result<Vec<crate::services::models::VoiceState>, String> {
+    let store = state.lock().map_err(|e| e.to_string())?;
+    Ok(store.get_voice_states(&guild_id))
 }
 
 #[tauri::command]
@@ -77,13 +129,23 @@ pub async fn get_messages(
 }
 
 #[tauri::command]
-pub async fn send_message(guild_id: String, channel_id: String, content: String, state: State<'_, DiscordState>) -> Result<SimpleMessage, String> {
+pub async fn send_message(guild_id: String, channel_id: String, content: String, reply_to: Option<String>, state: State<'_, DiscordState>) -> Result<SimpleMessage, String> {
     let client = {
         let c = state.client.lock().unwrap();
         c.as_ref().cloned().ok_or("Client not initialized")?
     };
 
-    social::send_message(&client, guild_id, channel_id, content).await
+    social::send_message(&client, guild_id, channel_id, content, reply_to).await
+}
+
+#[tauri::command]
+pub async fn delete_message(channel_id: String, message_id: String, state: State<'_, DiscordState>) -> Result<(), String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::delete_message(&client, channel_id, message_id).await
 }
 
 #[tauri::command]

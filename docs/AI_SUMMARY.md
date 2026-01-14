@@ -112,12 +112,18 @@ signaling-server/
         *   AV1コーデック優先ロジック（安定化済み）
         *   画質設定UI（1080p/720p/Native, 15/30/60/**120fps**）
         *   Adaptive Bitrate Control連携
+    *   **Gateway Member List (OP 14)**: 
+        *   Discord公式と同様のLazy Request実装
+        *   メンバー一覧リアルタイム取得
+        *   プレゼンス表示（オンライン/離席/DND/オフライン）
+        *   アクティビティ表示（Playing X, Listening to Y）
+        *   ボイス状態追跡
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
 
 ### ⚠️ Known Issues
-*   特になし
+*   **OP 14非公式API**: Gateway OP 14は非公式なため、Discord側の変更で動かなくなる可能性あり
 
 ---
 
