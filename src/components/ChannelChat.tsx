@@ -1,6 +1,8 @@
 // Interfaces (Should ideally be shared/imported)
-import { linkify } from '../utils/textUtils';
-import { useState, useEffect } from 'react';
+import { parseMessageContent, MentionContext } from '../lib/messageParser';
+import { MentionPicker, useMentionPicker } from './MentionPicker';
+import { SlashCommandPicker, useSlashCommandPicker } from './SlashCommandPicker';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 export interface Channel {
@@ -109,6 +111,24 @@ export function ChannelChat({
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, message: Message } | null>(null);
     const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+
+    // 入力状態（メンションピッカー用）
+    const [inputValue, setInputValue] = useState('');
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    // メンションコンテキスト（チャンネル名解決用）
+    const mentionContext: MentionContext = useMemo(() => ({
+        channels: new Map(channels.map(c => [c.id, { id: c.id, name: c.name }]))
+    }), [channels]);
+
+    // メンションピッカー
+    const mentionPicker = useMentionPicker({
+        channels: channels.map(c => ({ id: c.id, name: c.name })),
+        // TODO: users と roles を追加（Gateway OP 14から取得したデータを使用）
+    });
+
+    // スラッシュコマンドピッカー
+    const slashPicker = useSlashCommandPicker();
 
     // Close context menu on click outside
     useEffect(() => {
@@ -247,7 +267,7 @@ export function ChannelChat({
                                                 {snapshot.message.author}
                                             </div>
                                             <div className="whitespace-pre-wrap dark:text-gray-300 text-gray-800">
-                                                {linkify(snapshot.message.content)}
+                                                {parseMessageContent(snapshot.message.content, { mentionContext })}
                                             </div>
                                             {/* Attachments in forward */}
                                             {snapshot.message.attachments && snapshot.message.attachments.length > 0 && (
@@ -267,7 +287,7 @@ export function ChannelChat({
                                             )}
                                         </div>
                                     ))}
-                                    <div className="mt-1 text-gray-300 whitespace-pre-wrap break-words">{linkify(m.content)}</div>
+                                    <div className="mt-1 text-gray-300 whitespace-pre-wrap break-words">{parseMessageContent(m.content, { mentionContext })}</div>
 
                                     {/* Embeds Rendering */}
                                     {m.embeds && m.embeds.map((embed, idx) => (
@@ -393,23 +413,89 @@ export function ChannelChat({
                             <button onClick={() => setReplyingTo(null)} className="hover:text-white">✕</button>
                         </div>
                     )}
-                    <input
-                        type="text"
-                        placeholder={selectedChannel ? `Message #${channelName || 'unknown'}` : "Select a channel"}
-                        className={`w-full bg-gray-800 border border-gray-700 p-3 rounded ${replyingTo ? 'rounded-t-none' : ''} text-white focus:outline-none focus:border-terminal-green ${!selectedChannel ? 'cursor-not-allowed opacity-50' : ''}`}
-                        disabled={!selectedChannel}
-                        onKeyDown={async (e) => {
-                            if (e.key === 'Enter') {
-                                const input = e.currentTarget;
-                                const content = input.value;
-                                if (content.trim()) {
-                                    await handleSendMessage(content, replyingTo?.id);
-                                    input.value = '';
+                    <div className="relative">
+                        {/* メンションピッカー */}
+                        <MentionPicker
+                            suggestions={mentionPicker.suggestions}
+                            isOpen={mentionPicker.isOpen}
+                            position={mentionPicker.position}
+                            selectedIndex={mentionPicker.selectedIndex}
+                            onSelect={(suggestion) => {
+                                const result = mentionPicker.replaceWithMention(inputValue, suggestion);
+                                setInputValue(result.newValue);
+                                mentionPicker.close();
+                                inputRef.current?.focus();
+                            }}
+                            onClose={mentionPicker.close}
+                        />
+                        {/* スラッシュコマンドピッカー */}
+                        <SlashCommandPicker
+                            commands={slashPicker.commands}
+                            isOpen={slashPicker.isOpen}
+                            position={slashPicker.position}
+                            selectedIndex={slashPicker.selectedIndex}
+                            onSelect={async (command) => {
+                                const result = slashPicker.executeCommand(inputValue, command);
+                                if (result.shouldSend && result.newValue.trim()) {
+                                    await handleSendMessage(result.newValue, replyingTo?.id);
+                                    setInputValue('');
                                     setReplyingTo(null);
                                 }
-                            }
-                        }}
-                    />
+                                slashPicker.close();
+                                inputRef.current?.focus();
+                            }}
+                            onClose={slashPicker.close}
+                        />
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            value={inputValue}
+                            placeholder={selectedChannel ? `Message #${channelName || 'unknown'}` : "Select a channel"}
+                            className={`w-full bg-gray-800 border border-gray-700 p-3 rounded ${replyingTo ? 'rounded-t-none' : ''} text-white focus:outline-none focus:border-terminal-green ${!selectedChannel ? 'cursor-not-allowed opacity-50' : ''}`}
+                            disabled={!selectedChannel}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                setInputValue(value);
+                                const cursor = e.target.selectionStart || 0;
+                                mentionPicker.handleInputChange(value, cursor, e.target);
+                                slashPicker.handleInputChange(value, cursor);
+                            }}
+                            onKeyDown={async (e) => {
+                                // スラッシュコマンドピッカーのキーボード操作
+                                const slashHandled = slashPicker.handleKeyDown(e);
+                                if (typeof slashHandled === 'object' && slashHandled.selected) {
+                                    const result = slashPicker.executeCommand(inputValue, slashHandled.selected);
+                                    if (result.shouldSend && result.newValue.trim()) {
+                                        await handleSendMessage(result.newValue, replyingTo?.id);
+                                        setInputValue('');
+                                        setReplyingTo(null);
+                                    }
+                                    slashPicker.close();
+                                    return;
+                                }
+                                if (slashHandled === true) return;
+
+                                // メンションピッカーのキーボード操作
+                                const handled = mentionPicker.handleKeyDown(e);
+                                if (typeof handled === 'object' && handled.selected) {
+                                    const result = mentionPicker.replaceWithMention(inputValue, handled.selected);
+                                    setInputValue(result.newValue);
+                                    mentionPicker.close();
+                                    return;
+                                }
+                                if (handled === true) return;
+
+                                // 通常のEnter送信
+                                if (e.key === 'Enter' && !mentionPicker.isOpen && !slashPicker.isOpen) {
+                                    if (inputValue.trim()) {
+                                        await handleSendMessage(inputValue, replyingTo?.id);
+                                        setInputValue('');
+                                        setReplyingTo(null);
+                                    }
+                                }
+                            }}
+                        />
+                    </div>
                 </div>
             </div>
         </div>

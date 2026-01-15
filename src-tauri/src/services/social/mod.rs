@@ -506,3 +506,140 @@ pub async fn search_discord(client: &Client, guild_id: String, query: String) ->
 
     Ok(simple_messages)
 }
+
+// =============================
+// Application Commands (BOT Slash Commands)
+// =============================
+
+/// アプリケーションコマンドのオプション
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommandOption {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub option_type: u8,
+    pub description: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub choices: Vec<CommandChoice>,
+    #[serde(default)]
+    pub options: Vec<CommandOption>, // サブコマンド用
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommandChoice {
+    pub name: String,
+    pub value: serde_json::Value,
+}
+
+/// アプリケーションコマンド
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ApplicationCommand {
+    pub id: String,
+    pub application_id: String,
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub options: Vec<CommandOption>,
+    #[serde(default)]
+    pub dm_permission: Option<bool>,
+}
+
+/// アプリケーションコマンドインデックスのレスポンス
+#[derive(Debug, serde::Deserialize)]
+struct ApplicationCommandIndex {
+    #[serde(default)]
+    application_commands: Vec<ApplicationCommand>,
+}
+
+/// ユーザーが使用可能なアプリケーションコマンドを取得
+pub async fn fetch_application_commands(client: &Client, guild_id: Option<String>) -> Result<Vec<ApplicationCommand>, String> {
+    // v9 APIを使用（v10では動かない可能性）
+    let url = "https://discord.com/api/v9/users/@me/application-command-index";
+    
+    let res = client.get(url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("API Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    let index: ApplicationCommandIndex = res.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    
+    // guild_idでフィルタリング（指定がなければ全コマンド）
+    // Note: APIレスポンスにguild_idは含まれない可能性があるため、現状は全コマンドを返す
+    Ok(index.application_commands)
+}
+
+/// インタラクション送信用のオプション
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InteractionOption {
+    #[serde(rename = "type")]
+    pub option_type: u8,
+    pub name: String,
+    pub value: serde_json::Value,
+}
+
+/// インタラクションデータ
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InteractionData {
+    pub id: String,              // コマンドID
+    pub name: String,            // コマンド名
+    #[serde(rename = "type")]
+    pub command_type: u8,        // 1 = slash command
+    #[serde(default)]
+    pub options: Vec<InteractionOption>,
+}
+
+/// インタラクション送信ペイロード
+#[derive(Debug, serde::Serialize)]
+struct InteractionPayload {
+    #[serde(rename = "type")]
+    interaction_type: u8,        // 2 = Application Command
+    application_id: String,
+    channel_id: String,
+    guild_id: Option<String>,
+    session_id: String,
+    data: InteractionData,
+    nonce: String,
+}
+
+/// インタラクションを送信（BOTコマンド実行）
+pub async fn send_interaction(
+    client: &Client,
+    channel_id: String,
+    guild_id: Option<String>,
+    application_id: String,
+    data: InteractionData,
+    session_id: String,
+) -> Result<(), String> {
+    // ナンス生成（Snowflake風のID）
+    let nonce = format!("{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0));
+
+    let payload = InteractionPayload {
+        interaction_type: 2, // Application Command
+        application_id,
+        channel_id,
+        guild_id,
+        session_id,
+        data,
+        nonce,
+    };
+
+    let res = client.post("https://discord.com/api/v9/interactions")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("Interaction Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    Ok(())
+}

@@ -219,3 +219,37 @@ pub async fn search_discord_api(
 
     Ok(messages)
 }
+
+// =============================
+// Application Commands (BOT Slash Commands)
+// =============================
+
+#[tauri::command]
+pub async fn get_application_commands(
+    guild_id: Option<String>,
+    state: State<'_, DiscordState>
+) -> Result<Vec<social::ApplicationCommand>, String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::fetch_application_commands(&client, guild_id).await
+}
+
+#[tauri::command]
+pub async fn send_interaction(
+    channel_id: String,
+    guild_id: Option<String>,
+    application_id: String,
+    data: social::InteractionData,
+    session_id: String,
+    state: State<'_, DiscordState>
+) -> Result<(), String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::send_interaction(&client, channel_id, guild_id, application_id, data, session_id).await
+}
