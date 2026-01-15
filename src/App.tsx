@@ -6,6 +6,7 @@ import { VoiceLayout } from './components/VoiceLayout';
 import { ChannelChat } from './components/ChannelChat';
 import { MemberSidebar, SimpleRole, MemberWithPresence } from './components/MemberSidebar';
 import { useWebRTC } from './hooks/useWebRTC';
+import { useWindowPosition } from './hooks/useWindowPosition';
 
 interface Guild {
     id: string;
@@ -95,6 +96,9 @@ const STATUS_CONFIG: Record<UserStatus, { label: string, color: string, indicato
 function App() {
 
     const webrtc = useWebRTC({ signalingUrl: 'ws://localhost:8080' });
+
+    // ウィンドウ位置管理（マルチモニター対応）
+    useWindowPosition();
 
     // Listen for real-time messages
     useEffect(() => {

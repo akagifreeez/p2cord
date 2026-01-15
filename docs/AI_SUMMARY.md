@@ -117,10 +117,19 @@ signaling-server/
         *   メンバー一覧リアルタイム取得
         *   プレゼンス表示（オンライン/離席/DND/オフライン）
         *   アクティビティ表示（Playing X, Listening to Y）
-        *   ボイス状態追跡
+    *   **Multi-Monitor & Screen Share Overhaul (2026-01-15/16)**:
+        *   **Native Browser Capture**: カスタムキャプチャ（Tauri経由）を廃止し、ブラウザネイティブの`getDisplayMedia`に一本化。60+ FPS、低CPU負荷、高画質を実現。
+        *   **Add Share Dropdown**: 画面共有ボタンを押すとドロップダウンメニューが表示され、「別の画面を追加」「すべての共有を停止」が選択可能。複数モニター同時配信に対応。
+        *   **Flexible Layout Modes**: ヘッダーにレイアウト切替ボタンを追加。
+            *   **Auto**: 新規配信を自動フォーカス
+            *   **Grid**: 全画面を均等グリッド表示
+            *   **Side-by-Side**: 配信画面を横並びで表示
+        *   **Track-Level Focus**: 同一ピアの複数ストリームを個別に管理。フォーカス時も他のストリームはフィルムストリップに表示。
+        *   **Filmstrip Enhancement**: フォーカス時に下部へ他ストリーム・参加者を横並び表示。
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
+*   さらなる低遅延化に向けたキャプチャレートの動的調整機能
 
 ### ⚠️ Known Issues
 *   **OP 14非公式API**: Gateway OP 14は非公式なため、Discord側の変更で動かなくなる可能性あり

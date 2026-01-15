@@ -1,0 +1,71 @@
+    Checking p2cord v0.1.0 (D:\_B\p2cord\src-tauri)
+warning: unused imports: `DiscordMember` and `DiscordUser`
+ --> src\services\social\mod.rs:2:64
+  |
+2 |     DiscordGuild, DiscordChannel, DiscordMessage, DiscordRole, DiscordMember,
+  |                                                                ^^^^^^^^^^^^^
+3 |     SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember,
+4 |     MessageSnapshot, SimpleMessageSnapshotData, DiscordUser
+  |                                                 ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `AtomicBool` and `Ordering`
+ --> src\services\state.rs:1:25
+  |
+1 | use std::sync::atomic::{AtomicBool, Ordering};
+  |                         ^^^^^^^^^^  ^^^^^^^^
+
+warning: unused import: `models::*`
+  --> src\services\mod.rs:11:9
+   |
+11 | pub use models::*;
+   |         ^^^^^^^^^
+
+warning: unused import: `state::*`
+  --> src\services\mod.rs:12:9
+   |
+12 | pub use state::*;
+   |         ^^^^^^^^
+
+warning: unused import: `Emitter`
+  --> src\lib.rs:10:22
+   |
+10 | use tauri::{Manager, Emitter};
+   |                      ^^^^^^^
+
+error[E0599]: no method named `to_rgb8` found for struct `ImageBuffer<image::Rgba<u8>, Vec<u8>>` in the current scope
+  --> src\bridge\capture.rs:49:70
+   |
+49 |                 let thumb_rgb = image::DynamicImage::ImageRgb8(thumb.to_rgb8());
+   |                                                                      ^^^^^^^ method not found in `ImageBuffer<image::Rgba<u8>, Vec<u8>>`
+
+error[E0599]: no method named `to_rgb8` found for struct `ImageBuffer<image::Rgba<u8>, Vec<u8>>` in the current scope
+   --> src\bridge\capture.rs:101:70
+    |
+101 |                 let thumb_rgb = image::DynamicImage::ImageRgb8(thumb.to_rgb8());
+    |                                                                      ^^^^^^^ method not found in `ImageBuffer<image::Rgba<u8>, Vec<u8>>`
+
+error[E0599]: no method named `to_rgb8` found for struct `ImageBuffer<image::Rgba<u8>, Vec<u8>>` in the current scope
+   --> src\bridge\capture.rs:154:62
+    |
+154 |             let img_rgb = image::DynamicImage::ImageRgb8(img.to_rgb8());
+    |                                                              ^^^^^^^ method not found in `ImageBuffer<image::Rgba<u8>, Vec<u8>>`
+
+error[E0599]: no method named `to_rgb8` found for struct `ImageBuffer<image::Rgba<u8>, Vec<u8>>` in the current scope
+   --> src\bridge\capture.rs:168:62
+    |
+168 |             let img_rgb = image::DynamicImage::ImageRgb8(img.to_rgb8());
+    |                                                              ^^^^^^^ method not found in `ImageBuffer<image::Rgba<u8>, Vec<u8>>`
+
+warning: unused variable: `client`
+   --> src\services\social\mod.rs:233:28
+    |
+233 | pub async fn fetch_members(client: &Client, guild_id: String) -> Result<Vec<SimpleMember>, String> {
+    |                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_client`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `p2cord` (lib) generated 6 warnings
+error: could not compile `p2cord` (lib) due to 4 previous errors; 6 warnings emitted

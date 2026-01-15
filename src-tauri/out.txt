@@ -1,4 +1,4 @@
-   Compiling p2cord v0.1.0 (D:\_B\p2cord\src-tauri)
+    Checking p2cord v0.1.0 (D:\_B\p2cord\src-tauri)
 warning: unused imports: `DiscordMember` and `DiscordUser`
  --> src\services\social\mod.rs:2:64
   |
@@ -34,27 +34,22 @@ warning: unused import: `Emitter`
 10 | use tauri::{Manager, Emitter};
    |                      ^^^^^^^
 
-error[E0599]: no method named `collect` found for struct `Vec<Monitor>` in the current scope
-  --> src\bridge\system.rs:50:10
-   |
-48 |       let monitors: Vec<_> = window.available_monitors()
-   |  ____________________________-
-49 | |         .map_err(|e| e.to_string())?
-50 | |         .collect();
-   | |         -^^^^^^^ `Vec<Monitor>` is not an iterator
-   | |_________|
-   |
-   |
-help: call `.into_iter()` first
-   |
-50 |         .into_iter().collect();
-   |          ++++++++++++
+error[E0599]: no method named `to_rgb8` found for struct `ImageBuffer<image::Rgba<u8>, Vec<u8>>` in the current scope
+   --> src\bridge\capture.rs:101:23
+    |
+101 |                 thumb.to_rgb8().write_to(&mut cursor, image::ImageFormat::Jpeg).map_err(|e| e.to_string())?;
+    |                       ^^^^^^^ method not found in `ImageBuffer<image::Rgba<u8>, Vec<u8>>`
 
 error[E0282]: type annotations needed
-  --> src\bridge\system.rs:53:19
-   |
-53 |         let pos = monitor.position();
-   |                   ^^^^^^^ cannot infer type
+   --> src\bridge\capture.rs:101:90
+    |
+101 |                 thumb.to_rgb8().write_to(&mut cursor, image::ImageFormat::Jpeg).map_err(|e| e.to_string())?;
+    |                                                                                          ^  - type must be known at this point
+    |
+help: consider giving this closure parameter an explicit type
+    |
+101 |                 thumb.to_rgb8().write_to(&mut cursor, image::ImageFormat::Jpeg).map_err(|e: /* Type */| e.to_string())?;
+    |                                                                                           ++++++++++++
 
 warning: unused variable: `client`
    --> src\services\social\mod.rs:233:28

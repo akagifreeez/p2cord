@@ -1,0 +1,250 @@
+    Checking p2cord v0.1.0 (D:\_B\p2cord\src-tauri)
+error[E0432]: unresolved import `image::ImageOutputFormat`
+ --> src\bridge\capture.rs:5:5
+  |
+5 | use image::ImageOutputFormat;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^ no `ImageOutputFormat` in the root
+
+warning: unused imports: `DiscordMember` and `DiscordUser`
+ --> src\services\social\mod.rs:2:64
+  |
+2 |     DiscordGuild, DiscordChannel, DiscordMessage, DiscordRole, DiscordMember,
+  |                                                                ^^^^^^^^^^^^^
+3 |     SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember,
+4 |     MessageSnapshot, SimpleMessageSnapshotData, DiscordUser
+  |                                                 ^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `AtomicBool` and `Ordering`
+ --> src\services\state.rs:1:25
+  |
+1 | use std::sync::atomic::{AtomicBool, Ordering};
+  |                         ^^^^^^^^^^  ^^^^^^^^
+
+warning: unused import: `models::*`
+  --> src\services\mod.rs:11:9
+   |
+11 | pub use models::*;
+   |         ^^^^^^^^^
+
+warning: unused import: `state::*`
+  --> src\services\mod.rs:12:9
+   |
+12 | pub use state::*;
+   |         ^^^^^^^^
+
+warning: unused import: `Emitter`
+  --> src\lib.rs:10:22
+   |
+10 | use tauri::{Manager, Emitter};
+   |                      ^^^^^^^
+
+error[E0599]: `Result<u32, XCapError>` doesn't implement `std::fmt::Display`
+  --> src\bridge\capture.rs:43:38
+   |
+43 |                     id: monitor.id().to_string(),
+   |                                      ^^^^^^^^^ method cannot be called on `Result<u32, XCapError>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Result<u32, XCapError>: std::fmt::Display`
+           which is required by `Result<u32, XCapError>: ToString`
+
+error[E0599]: `Result<std::string::String, XCapError>` doesn't implement `std::fmt::Display`
+  --> src\bridge\capture.rs:44:42
+   |
+44 |                     name: monitor.name().to_string(),
+   |                                          ^^^^^^^^^ method cannot be called on `Result<std::string::String, XCapError>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Result<std::string::String, XCapError>: std::fmt::Display`
+           which is required by `Result<std::string::String, XCapError>: ToString`
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:47:28
+   |
+47 |                     width: monitor.width(),
+   |                            ^^^^^^^^^^^^^^^ expected `u32`, found `Result<u32, XCapError>`
+   |
+   = note: expected type `u32`
+              found enum `Result<u32, XCapError>`
+help: use the `?` operator to extract the `Result<u32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+47 |                     width: monitor.width()?,
+   |                                           +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:48:29
+   |
+48 |                     height: monitor.height(),
+   |                             ^^^^^^^^^^^^^^^^ expected `u32`, found `Result<u32, XCapError>`
+   |
+   = note: expected type `u32`
+              found enum `Result<u32, XCapError>`
+help: use the `?` operator to extract the `Result<u32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+48 |                     height: monitor.height()?,
+   |                                             +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:49:24
+   |
+49 |                     x: monitor.x(),
+   |                        ^^^^^^^^^^^ expected `i32`, found `Result<i32, XCapError>`
+   |
+   = note: expected type `i32`
+              found enum `Result<i32, XCapError>`
+help: use the `?` operator to extract the `Result<i32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+49 |                     x: monitor.x()?,
+   |                                   +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:50:24
+   |
+50 |                     y: monitor.y(),
+   |                        ^^^^^^^^^^^ expected `i32`, found `Result<i32, XCapError>`
+   |
+   = note: expected type `i32`
+              found enum `Result<i32, XCapError>`
+help: use the `?` operator to extract the `Result<i32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+50 |                     y: monitor.y()?,
+   |                                   +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:61:12
+   |
+61 |         if window.is_minimized() || window.width() < 50 || window.height() < 50 {
+   |            ^^^^^^^^^^^^^^^^^^^^^ expected `bool`, found `Result<bool, XCapError>`
+   |
+   = note: expected type `bool`
+              found enum `Result<bool, XCapError>`
+help: use the `?` operator to extract the `Result<bool, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+61 |         if window.is_minimized()? || window.width() < 50 || window.height() < 50 {
+   |                                 +
+
+error[E0369]: binary operation `<` cannot be applied to type `Result<u32, XCapError>`
+  --> src\bridge\capture.rs:61:52
+   |
+61 |         if window.is_minimized() || window.width() < 50 || window.height() < 50 {
+   |                                     -------------- ^ -- {integer}
+   |                                     |
+   |                                     Result<u32, XCapError>
+   |
+note: the foreign item type `Result<u32, XCapError>` doesn't implement `PartialOrd<{integer}>`
+  --> /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234\library\core\src\result.rs:557:1
+   |
+   = note: not implement `PartialOrd<{integer}>`
+
+error[E0369]: binary operation `<` cannot be applied to type `Result<u32, XCapError>`
+  --> src\bridge\capture.rs:61:76
+   |
+61 |         if window.is_minimized() || window.width() < 50 || window.height() < 50 {
+   |                                                            --------------- ^ -- {integer}
+   |                                                            |
+   |                                                            Result<u32, XCapError>
+   |
+note: the foreign item type `Result<u32, XCapError>` doesn't implement `PartialOrd<{integer}>`
+  --> /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234\library\core\src\result.rs:557:1
+   |
+   = note: not implement `PartialOrd<{integer}>`
+
+error[E0599]: no method named `is_empty` found for enum `Result<T, E>` in the current scope
+  --> src\bridge\capture.rs:66:27
+   |
+66 |         if window.title().is_empty() {
+   |                           ^^^^^^^^ method not found in `Result<std::string::String, XCapError>`
+   |
+note: the method `is_empty` exists on the type `std::string::String`
+  --> /rustc/ded5c06cf21d2b93bffd5d884aa6e96934ee4234\library\alloc\src\string.rs:1868:5
+help: use the `?` operator to extract the `std::string::String` value, propagating a `Result::Err` value to the caller
+   |
+66 |         if window.title()?.is_empty() {
+   |                          +
+
+error[E0599]: `Result<u32, XCapError>` doesn't implement `std::fmt::Display`
+  --> src\bridge\capture.rs:85:37
+   |
+85 |                     id: window.id().to_string(), // implementation specific, but unique enough
+   |                                     ^^^^^^^^^ method cannot be called on `Result<u32, XCapError>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Result<u32, XCapError>: std::fmt::Display`
+           which is required by `Result<u32, XCapError>: ToString`
+
+error[E0599]: `Result<std::string::String, XCapError>` doesn't implement `std::fmt::Display`
+  --> src\bridge\capture.rs:86:42
+   |
+86 |                     name: window.title().to_string(),
+   |                                          ^^^^^^^^^ method cannot be called on `Result<std::string::String, XCapError>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Result<std::string::String, XCapError>: std::fmt::Display`
+           which is required by `Result<std::string::String, XCapError>: ToString`
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:89:28
+   |
+89 |                     width: window.width(),
+   |                            ^^^^^^^^^^^^^^ expected `u32`, found `Result<u32, XCapError>`
+   |
+   = note: expected type `u32`
+              found enum `Result<u32, XCapError>`
+help: use the `?` operator to extract the `Result<u32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+89 |                     width: window.width()?,
+   |                                          +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:90:29
+   |
+90 |                     height: window.height(),
+   |                             ^^^^^^^^^^^^^^^ expected `u32`, found `Result<u32, XCapError>`
+   |
+   = note: expected type `u32`
+              found enum `Result<u32, XCapError>`
+help: use the `?` operator to extract the `Result<u32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+90 |                     height: window.height()?,
+   |                                            +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:91:24
+   |
+91 |                     x: window.x(),
+   |                        ^^^^^^^^^^ expected `i32`, found `Result<i32, XCapError>`
+   |
+   = note: expected type `i32`
+              found enum `Result<i32, XCapError>`
+help: use the `?` operator to extract the `Result<i32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+91 |                     x: window.x()?,
+   |                                  +
+
+error[E0308]: mismatched types
+  --> src\bridge\capture.rs:92:24
+   |
+92 |                     y: window.y(),
+   |                        ^^^^^^^^^^ expected `i32`, found `Result<i32, XCapError>`
+   |
+   = note: expected type `i32`
+              found enum `Result<i32, XCapError>`
+help: use the `?` operator to extract the `Result<i32, XCapError>` value, propagating a `Result::Err` value to the caller
+   |
+92 |                     y: window.y()?,
+   |                                  +
+
+warning: unused variable: `client`
+   --> src\services\social\mod.rs:233:28
+    |
+233 | pub async fn fetch_members(client: &Client, guild_id: String) -> Result<Vec<SimpleMember>, String> {
+    |                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_client`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0308, E0369, E0432, E0599.
+For more information about an error, try `rustc --explain E0308`.
+warning: `p2cord` (lib) generated 6 warnings
+error: could not compile `p2cord` (lib) due to 17 previous errors; 6 warnings emitted

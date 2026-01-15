@@ -37,11 +37,18 @@ pub fn run() {
             get_app_info,
             // Bridge: System/Desktop
             bridge::system::get_monitors,
+            bridge::system::get_window_position,
+            bridge::system::set_window_position,
+            bridge::system::move_to_next_monitor,
+            bridge::system::move_to_prev_monitor,
             bridge::system::simulate_mouse_move,
             bridge::system::simulate_click,
             bridge::system::simulate_scroll,
             bridge::system::simulate_key,
             bridge::system::write_clipboard,
+            // Bridge: Capture
+            bridge::capture::get_capture_sources,
+            bridge::capture::get_source_frame,
             // Bridge: Identity
             bridge::identity::init_client,
             // Bridge: Social (Discord)

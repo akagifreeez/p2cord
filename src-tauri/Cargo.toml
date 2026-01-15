@@ -30,4 +30,7 @@ urlencoding = "2.1"
 
 bytes = "1.0"
 uuid = { version = "1.19.0", features = ["v4", "serde"] }
+xcap = "0.8.1"
+image = { version = "0.25.9", features = ["png", "jpeg", "webp"] }
+base64 = "0.22.1"
 
