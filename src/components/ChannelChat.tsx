@@ -1,7 +1,7 @@
 // Interfaces (Should ideally be shared/imported)
 import { parseMessageContent, MentionContext } from '../lib/messageParser';
 import { MentionPicker, useMentionPicker } from './MentionPicker';
-import { SlashCommandPicker, useSlashCommandPicker } from './SlashCommandPicker';
+import { SlashCommandPicker, useSlashCommandPicker, BotCommand } from './SlashCommandPicker';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -116,6 +116,52 @@ export function ChannelChat({
     const [inputValue, setInputValue] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
+    // BOTコマンド状態
+    const [botCommands, setBotCommands] = useState<BotCommand[]>([]);
+
+    // BOTコマンドを取得
+    useEffect(() => {
+        const fetchBotCommands = async () => {
+            try {
+                const commands = await invoke<Array<{
+                    id: string;
+                    application_id: string;
+                    name: string;
+                    description: string;
+                    options: Array<{
+                        name: string;
+                        option_type: number;
+                        description: string;
+                        required: boolean;
+                        choices: Array<{ name: string; value: string | number }>;
+                        options: Array<unknown>;
+                    }>;
+                }>>('get_application_commands', { guildId: null });
+
+                setBotCommands(commands.map(cmd => ({
+                    type: 'bot' as const,
+                    id: cmd.id,
+                    application_id: cmd.application_id,
+                    name: cmd.name,
+                    description: cmd.description,
+                    options: cmd.options.map(opt => ({
+                        name: opt.name,
+                        option_type: opt.option_type,
+                        description: opt.description,
+                        required: opt.required,
+                        choices: opt.choices || [],
+                        options: []
+                    }))
+                })));
+                console.log(`[ChannelChat] Loaded ${commands.length} bot commands`);
+            } catch (e) {
+                console.error('[ChannelChat] Failed to fetch bot commands:', e);
+            }
+        };
+
+        fetchBotCommands();
+    }, []); // 一度だけ取得
+
     // メンションコンテキスト（チャンネル名解決用）
     const mentionContext: MentionContext = useMemo(() => ({
         channels: new Map(channels.map(c => [c.id, { id: c.id, name: c.name }]))
@@ -127,8 +173,8 @@ export function ChannelChat({
         // TODO: users と roles を追加（Gateway OP 14から取得したデータを使用）
     });
 
-    // スラッシュコマンドピッカー
-    const slashPicker = useSlashCommandPicker();
+    // スラッシュコマンドピッカー（BOTコマンド含む）
+    const slashPicker = useSlashCommandPicker(botCommands);
 
     // Close context menu on click outside
     useEffect(() => {
@@ -436,7 +482,29 @@ export function ChannelChat({
                             selectedIndex={slashPicker.selectedIndex}
                             onSelect={async (command) => {
                                 const result = slashPicker.executeCommand(inputValue, command);
-                                if (result.shouldSend && result.newValue.trim()) {
+
+                                if (result.isBotCommand && result.botCommand) {
+                                    // BOTコマンド実行
+                                    try {
+                                        await invoke('send_interaction', {
+                                            channelId: selectedChannel,
+                                            guildId: null, // TODO: props から取得
+                                            applicationId: result.botCommand.application_id,
+                                            data: {
+                                                id: result.botCommand.id,
+                                                name: result.botCommand.name,
+                                                command_type: 1, // slash command
+                                                options: [], // TODO: 引数パース実装
+                                            },
+                                            sessionId: 'p2cord-session', // TODO: Gateway session_id を使用
+                                        });
+                                        console.log(`[ChannelChat] Executed bot command: /${result.botCommand.name}`);
+                                    } catch (e) {
+                                        console.error('[ChannelChat] Failed to execute bot command:', e);
+                                    }
+                                    setInputValue('');
+                                } else if (result.shouldSend && result.newValue.trim()) {
+                                    // ビルトインコマンド
                                     await handleSendMessage(result.newValue, replyingTo?.id);
                                     setInputValue('');
                                     setReplyingTo(null);
@@ -465,7 +533,28 @@ export function ChannelChat({
                                 const slashHandled = slashPicker.handleKeyDown(e);
                                 if (typeof slashHandled === 'object' && slashHandled.selected) {
                                     const result = slashPicker.executeCommand(inputValue, slashHandled.selected);
-                                    if (result.shouldSend && result.newValue.trim()) {
+
+                                    if (result.isBotCommand && result.botCommand) {
+                                        // BOTコマンド実行
+                                        try {
+                                            await invoke('send_interaction', {
+                                                channelId: selectedChannel,
+                                                guildId: null,
+                                                applicationId: result.botCommand.application_id,
+                                                data: {
+                                                    id: result.botCommand.id,
+                                                    name: result.botCommand.name,
+                                                    command_type: 1,
+                                                    options: [],
+                                                },
+                                                sessionId: 'p2cord-session',
+                                            });
+                                            console.log(`[ChannelChat] Executed bot command: /${result.botCommand.name}`);
+                                        } catch (err) {
+                                            console.error('[ChannelChat] Failed to execute bot command:', err);
+                                        }
+                                        setInputValue('');
+                                    } else if (result.shouldSend && result.newValue.trim()) {
                                         await handleSendMessage(result.newValue, replyingTo?.id);
                                         setInputValue('');
                                         setReplyingTo(null);

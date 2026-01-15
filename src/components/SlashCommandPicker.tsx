@@ -78,11 +78,11 @@ export const BUILT_IN_COMMANDS: SlashCommand[] = [
 ];
 
 interface SlashCommandPickerProps {
-    commands: SlashCommand[];
+    commands: AnyCommand[];
     isOpen: boolean;
     position: { top: number; left: number };
     selectedIndex: number;
-    onSelect: (command: SlashCommand) => void;
+    onSelect: (command: AnyCommand) => void;
     onClose: () => void;
 }
 
@@ -121,9 +121,14 @@ export const SlashCommandPicker: React.FC<SlashCommandPickerProps> = ({
                         onClick={() => onSelect(cmd)}
                     >
                         <div className="flex items-center gap-2">
+                            {/* BOTコマンドにはアイコン表示 */}
+                            {cmd.type === 'bot' && <span className="text-xs text-purple-400">🤖</span>}
                             <span className="font-mono text-cyan-400">/{cmd.name}</span>
-                            {cmd.args && (
+                            {cmd.type === 'builtin' && cmd.args && (
                                 <span className="text-xs text-gray-500">{cmd.args}</span>
+                            )}
+                            {cmd.type === 'bot' && cmd.options.length > 0 && (
+                                <span className="text-xs text-gray-500">[{cmd.options.length}個の引数]</span>
                             )}
                         </div>
                         <div className="text-xs text-gray-400 mt-0.5">
@@ -142,13 +147,13 @@ export const SlashCommandPicker: React.FC<SlashCommandPickerProps> = ({
 /**
  * スラッシュコマンドピッカー用フック
  */
-export function useSlashCommandPicker(customCommands: SlashCommand[] = []) {
+export function useSlashCommandPicker(customCommands: AnyCommand[] = []) {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [triggerIndex, setTriggerIndex] = useState(-1);
 
-    const allCommands = useMemo(() => [
+    const allCommands: AnyCommand[] = useMemo(() => [
         ...BUILT_IN_COMMANDS,
         ...customCommands,
     ], [customCommands]);
@@ -185,7 +190,7 @@ export function useSlashCommandPicker(customCommands: SlashCommand[] = []) {
     }, []);
 
     // キーボード操作
-    const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean | { selected: SlashCommand } => {
+    const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean | { selected: AnyCommand } => {
         if (!isOpen) return false;
 
         switch (e.key) {
@@ -219,25 +224,37 @@ export function useSlashCommandPicker(customCommands: SlashCommand[] = []) {
         return false;
     }, [isOpen, filteredCommands, selectedIndex]);
 
-    // コマンドを実行して送信テキストを取得
+    // コマンドを実行して送信テキストを取得（ビルトインのみ）
+    // BOTコマンドはChannelChat側でsend_interactionを呼ぶ
     const executeCommand = useCallback((
         value: string,
-        command: SlashCommand
-    ): { newValue: string; shouldSend: boolean } => {
-        if (triggerIndex < 0) return { newValue: value, shouldSend: false };
+        command: AnyCommand
+    ): { newValue: string; shouldSend: boolean; isBotCommand: boolean; botCommand?: BotCommand } => {
+        if (triggerIndex < 0) return { newValue: value, shouldSend: false, isBotCommand: false };
 
         // /コマンド部分を除去して引数を取得
         const before = value.slice(0, triggerIndex);
         const afterSlash = value.slice(triggerIndex);
         const argsMatch = afterSlash.match(/^\/\w*\s*(.*)$/);
-        const args = argsMatch ? argsMatch[1] : '';
+        const _args = argsMatch ? argsMatch[1] : '';
 
-        // コマンド実行
-        const result = command.execute(args);
+        if (command.type === 'bot') {
+            // BOTコマンドは別処理（ChannelChatでsend_interaction）
+            return {
+                newValue: before,
+                shouldSend: false,
+                isBotCommand: true,
+                botCommand: command,
+            };
+        }
+
+        // ビルトインコマンド実行
+        const result = command.execute(_args);
 
         return {
             newValue: before + result,
             shouldSend: true, // 即送信
+            isBotCommand: false,
         };
     }, [triggerIndex]);
 
