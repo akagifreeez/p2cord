@@ -7,6 +7,7 @@ import { ChannelChat } from './components/ChannelChat';
 import { MemberSidebar, SimpleRole, MemberWithPresence } from './components/MemberSidebar';
 import { useWebRTC } from './hooks/useWebRTC';
 import { useWindowPosition } from './hooks/useWindowPosition';
+import { registerCoreCommands } from './services/commands/definitions/core';
 
 interface Guild {
     id: string;
@@ -100,6 +101,11 @@ function App() {
     // ウィンドウ位置管理（マルチモニター対応）
     useWindowPosition();
 
+    // Register built-in slash commands
+    useEffect(() => {
+        registerCoreCommands();
+    }, []);
+
     // Listen for real-time messages
     useEffect(() => {
         const unlistenPromise = listen<SimpleMessage>('message_create', (event) => {
@@ -142,6 +148,32 @@ function App() {
             }
         });
 
+        // Command Events
+        const clearChatHandler = () => {
+            // Clear messages for current channel only, locally
+            setMessages([]);
+            console.log("[App] Chat cleared by command");
+        };
+
+        const systemMessageHandler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            const sysMsg: Message = {
+                id: 'system-' + Date.now(),
+                guild_id: selectedGuild || '',
+                channel_id: selectedChannelRef.current || '',
+                content: detail,
+                author: 'System',
+                timestamp: new Date().toISOString(),
+                embeds: [],
+                attachments: [],
+                kind: 'System'
+            };
+            setMessages(prev => [...prev, sysMsg]);
+        };
+
+        window.addEventListener('p2cord:clear-chat', clearChatHandler);
+        window.addEventListener('p2cord:system-message', systemMessageHandler);
+
         const unlistenDeletePromise = listen<{ id: string, channel_id: string, guild_id: string }>('message_delete', (event) => {
             const { id, channel_id } = event.payload;
             console.log("[App] Message Deleted:", id);
@@ -153,6 +185,8 @@ function App() {
         return () => {
             unlistenPromise.then(unlisten => unlisten());
             unlistenDeletePromise.then(unlisten => unlisten());
+            window.removeEventListener('p2cord:clear-chat', clearChatHandler);
+            window.removeEventListener('p2cord:system-message', systemMessageHandler);
         };
     }, []);
 
@@ -1211,6 +1245,7 @@ function App() {
                 <ChannelChat
                     status={'' /* エラー表示を無効化 */}
                     selectedChannel={selectedChannel}
+                    selectedGuild={selectedGuild}
                     channelName={channels.find(c => c.id === selectedChannel)?.name}
                     channels={channels as any} // Cast to compatible type
                     messages={messages}

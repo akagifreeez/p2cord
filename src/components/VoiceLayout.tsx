@@ -639,6 +639,7 @@ export function VoiceLayout({
                     <ChannelChat
                         status={webrtc.isConnected ? "Connected" : "Disconnected"}
                         selectedChannel={connectedVoiceChannelId}
+                        selectedGuild={null} // VoiceLayout doesn't have guild context
                         channelName="Voice Chat"
                         channels={[]} // Not needed contextually for voice chat list
                         messages={messages}

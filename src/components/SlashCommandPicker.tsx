@@ -1,81 +1,28 @@
 import React, { useState, useCallback, useMemo } from 'react';
+import { commandRegistry } from '../services/commands/registry';
+import { CommandParser } from '../services/commands/parser';
+import { Command } from '../services/commands/types';
 
 /**
- * スラッシュコマンドピッカー
- * /入力でコマンド一覧を表示（ビルトイン + BOTコマンド）
+ * Slash Command Picker
+ * Shows commands starting with / (Built-in + Bot commands)
  */
 
-// ビルトインコマンド
-export interface SlashCommand {
-    type: 'builtin';
-    name: string;
-    description: string;
-    args?: string;
-    execute: (args: string) => string;
-}
-
-// BOTコマンド（Discord Application Command）
+// Bot Command (Discord Application Command)
 export interface BotCommand {
     type: 'bot';
     id: string;
+    version: string;
     application_id: string;
     name: string;
     description: string;
-    options: CommandOption[];
+    options: any[]; // keeping loose for now to match Component prop
+    guild_id?: string;
+    integration_types?: number[]; // Added
+    contexts?: number[]; // Added
 }
 
-export interface CommandOption {
-    name: string;
-    option_type: number;
-    description: string;
-    required: boolean;
-    choices: Array<{ name: string; value: string | number }>;
-    options: CommandOption[];
-}
-
-export type AnyCommand = SlashCommand | BotCommand;
-
-// 組み込みコマンド定義
-export const BUILT_IN_COMMANDS: SlashCommand[] = [
-    {
-        type: 'builtin',
-        name: 'shrug',
-        description: '¯\\_(ツ)_/¯ を送信',
-        execute: (args) => `¯\\_(ツ)_/¯ ${args}`.trim(),
-    },
-    {
-        type: 'builtin',
-        name: 'tableflip',
-        description: '(╯°□°)╯︵ ┻━┻ を送信',
-        execute: (args) => `(╯°□°)╯︵ ┻━┻ ${args}`.trim(),
-    },
-    {
-        type: 'builtin',
-        name: 'unflip',
-        description: '┬─┬ノ( º _ ºノ) を送信',
-        execute: (args) => `┬─┬ノ( º _ ºノ) ${args}`.trim(),
-    },
-    {
-        type: 'builtin',
-        name: 'me',
-        description: 'アクション形式で送信',
-        args: '[アクション]',
-        execute: (args) => `*${args}*`,
-    },
-    {
-        type: 'builtin',
-        name: 'spoiler',
-        description: 'スポイラーテキストを送信',
-        args: '[テキスト]',
-        execute: (args) => `||${args}||`,
-    },
-    {
-        type: 'builtin',
-        name: 'lenny',
-        description: '( ͡° ͜ʖ ͡°) を送信',
-        execute: (args) => `( ͡° ͜ʖ ͡°) ${args}`.trim(),
-    },
-];
+export type AnyCommand = Command | BotCommand;
 
 interface SlashCommandPickerProps {
     commands: AnyCommand[];
@@ -108,79 +55,83 @@ export const SlashCommandPicker: React.FC<SlashCommandPickerProps> = ({
             }}
         >
             <div className="px-3 py-2 border-b border-gray-700 text-xs text-gray-400 font-bold uppercase">
-                コマンド
+                Commands
             </div>
-            <div className="overflow-y-auto max-h-[200px]">
-                {commands.map((cmd, index) => (
-                    <div
-                        key={cmd.name}
-                        className={`px-3 py-2 cursor-pointer transition-colors ${index === selectedIndex
-                            ? 'bg-blue-600 text-white'
-                            : 'hover:bg-gray-800 text-gray-300'
-                            }`}
-                        onClick={() => onSelect(cmd)}
-                    >
-                        <div className="flex items-center gap-2">
-                            {/* BOTコマンドにはアイコン表示 */}
-                            {cmd.type === 'bot' && <span className="text-xs text-purple-400">🤖</span>}
-                            <span className="font-mono text-cyan-400">/{cmd.name}</span>
-                            {cmd.type === 'builtin' && cmd.args && (
-                                <span className="text-xs text-gray-500">{cmd.args}</span>
-                            )}
-                            {cmd.type === 'bot' && cmd.options.length > 0 && (
-                                <span className="text-xs text-gray-500">[{cmd.options.length}個の引数]</span>
-                            )}
+            <div className="overflow-y-auto max-h-[200px] custom-scrollbar">
+                {commands.map((cmd, index) => {
+                    const isBot = 'type' in cmd && cmd.type === 'bot';
+                    return (
+                        <div
+                            key={isBot ? `bot-${(cmd as BotCommand).id}` : `builtin-${cmd.name}`}
+                            className={`px-3 py-2 cursor-pointer transition-colors ${index === selectedIndex
+                                ? 'bg-blue-600 text-white'
+                                : 'hover:bg-gray-800 text-gray-300'
+                                }`}
+                            onClick={() => onSelect(cmd)}
+                        >
+                            <div className="flex items-center gap-2">
+                                {isBot && <span className="text-xs text-purple-400">🤖</span>}
+                                <span className="font-mono text-cyan-400">/{cmd.name}</span>
+                                {!isBot && cmd.options && cmd.options.length > 0 && (
+                                    <span className="text-xs text-gray-500">
+                                        {cmd.options.map(o => `[${o.name}]`).join(' ')}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-0.5 truncate">
+                                {cmd.description}
+                            </div>
                         </div>
-                        <div className="text-xs text-gray-400 mt-0.5">
-                            {cmd.description}
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
-            <div className="px-3 py-1.5 text-xs text-gray-500 border-t border-gray-700 bg-gray-900/50">
-                ↑↓で選択 • Enterで確定 • Escで閉じる
+            <div className="px-3 py-1.5 text-xs text-gray-500 border-t border-gray-700 bg-gray-900/50 flex justify-between">
+                <span>↑↓ Select • Enter</span>
+                <span>Esc Close</span>
             </div>
         </div>
     );
 };
 
-/**
- * スラッシュコマンドピッカー用フック
- */
-export function useSlashCommandPicker(customCommands: AnyCommand[] = []) {
+export function useSlashCommandPicker(botCommands: BotCommand[] = []) {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [triggerIndex, setTriggerIndex] = useState(-1);
 
-    const allCommands: AnyCommand[] = useMemo(() => [
-        ...BUILT_IN_COMMANDS,
-        ...customCommands,
-    ], [customCommands]);
-
-    // コマンドをフィルタリング
+    // Filter and merge commands
     const filteredCommands = useMemo(() => {
         if (!isOpen) return [];
 
         const lowerQuery = query.toLowerCase();
-        return allCommands.filter(cmd =>
-            query.length === 0 || cmd.name.toLowerCase().includes(lowerQuery)
-        );
-    }, [isOpen, query, allCommands]);
 
-    // 入力処理
+        // Match built-in commands
+        const builtInMatches = commandRegistry.getAll().filter(cmd =>
+            query.length === 0 || cmd.name.toLowerCase().startsWith(lowerQuery)
+        );
+
+        // Match bot commands
+        const botMatches = botCommands.filter(cmd =>
+            query.length === 0 || cmd.name.toLowerCase().startsWith(lowerQuery)
+        );
+
+        return [...builtInMatches, ...botMatches];
+    }, [isOpen, query, botCommands]);
+
+    // Input handling
     const handleInputChange = useCallback((
         value: string,
         cursorPosition: number
     ) => {
-        // /の検索（行頭または空白後）
+        // Find / at start or after space
         const beforeCursor = value.slice(0, cursorPosition);
         const slashMatch = beforeCursor.match(/(?:^|\s)\/(\w*)$/);
 
         if (slashMatch) {
             setIsOpen(true);
+            const matchIndex = beforeCursor.lastIndexOf('/'); // Approximate, good enough for single line
+            setTriggerIndex(matchIndex);
             setQuery(slashMatch[1]);
-            setTriggerIndex(beforeCursor.lastIndexOf('/'));
             setSelectedIndex(0);
         } else {
             setIsOpen(false);
@@ -189,7 +140,7 @@ export function useSlashCommandPicker(customCommands: AnyCommand[] = []) {
         }
     }, []);
 
-    // キーボード操作
+    // Keyboard handling
     const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean | { selected: AnyCommand } => {
         if (!isOpen) return false;
 
@@ -224,39 +175,103 @@ export function useSlashCommandPicker(customCommands: AnyCommand[] = []) {
         return false;
     }, [isOpen, filteredCommands, selectedIndex]);
 
-    // コマンドを実行して送信テキストを取得（ビルトインのみ）
-    // BOTコマンドはChannelChat側でsend_interactionを呼ぶ
-    const executeCommand = useCallback((
-        value: string,
+    // Command Execution
+    const executeCommand = useCallback(async (
+        fullInputValue: string,
         command: AnyCommand
-    ): { newValue: string; shouldSend: boolean; isBotCommand: boolean; botCommand?: BotCommand } => {
-        if (triggerIndex < 0) return { newValue: value, shouldSend: false, isBotCommand: false };
+    ): Promise<{ newValue: string; shouldSend: boolean; isBotCommand: boolean; botCommand?: BotCommand }> => {
+        if (triggerIndex < 0) return { newValue: fullInputValue, shouldSend: false, isBotCommand: false };
 
-        // /コマンド部分を除去して引数を取得
-        const before = value.slice(0, triggerIndex);
-        const afterSlash = value.slice(triggerIndex);
-        const argsMatch = afterSlash.match(/^\/\w*\s*(.*)$/);
-        const _args = argsMatch ? argsMatch[1] : '';
+        // Bot Command
+        if ('type' in command && command.type === 'bot') {
+            const before = fullInputValue.slice(0, triggerIndex);
 
-        if (command.type === 'bot') {
-            // BOTコマンドは別処理（ChannelChatでsend_interaction）
+            // Autocomplete the command name
+            // Users will type arguments and hit Enter to execute (handled in ChannelChat)
             return {
-                newValue: before,
+                newValue: before + '/' + command.name + ' ',
                 shouldSend: false,
-                isBotCommand: true,
+                isBotCommand: false, // Don't trigger immediate execution
                 botCommand: command,
             };
         }
 
-        // ビルトインコマンド実行
-        const result = command.execute(_args);
+        // Built-in Command with Parser
+        // We need to parse everything AFTER the slash.
+        // Assuming the input is currently `/cmd arg...`
+        // But the user might have selected from picker before finishing typing.
 
-        return {
-            newValue: before + result,
-            shouldSend: true, // 即送信
-            isBotCommand: false,
-        };
-    }, [triggerIndex]);
+        // Scenario A: User typed partial `/cle` and pressed Enter.
+        // We should replace `/cle` with `/clear `?
+        // Or if simple command, just run it?
+
+        const cmd = command as Command;
+        const before = fullInputValue.slice(0, triggerIndex);
+
+        // For now, if picked from list, we just execute it with empty args if simple,
+        // or we might want to auto-complete the name and wait for args.
+        // But the current interaction model is "Action Commands" mostly.
+
+        // Let's assume for now, selecting a command EXECUTES it if it has no required args?
+        // Or maybe just auto-completes the name?
+        // The original code executed it immediately.
+
+        // Replicating original behavior:
+        // Use regex to get args.
+
+        // If we are auto-completing, we might not have args yet.
+        // BUT if the user pressed Enter on the Picker, they are "selecting" the command.
+
+        // If the command needs args (like /me action), usually we'd just autocomplete the Name.
+        // But `CommandParser` parses a FULL string.
+
+        // Temporary hybrid:
+        // 1. If options required, just autocomplete name.
+        // 2. If no options, Execute.
+
+        const hasRequired = cmd.options?.some(o => o.required);
+
+        if (hasRequired) {
+            // Auto-complete name
+            return {
+                newValue: before + '/' + cmd.name + ' ',
+                shouldSend: false,
+                isBotCommand: false
+            };
+        }
+
+        // Execute immediately
+        // Note: We need to parse ANY existing args if they typed `/shrug foo`
+        // Parser expects `/shrug foo`
+
+        // Correct reconstruction:
+        const constructedInput = '/' + cmd.name + fullInputValue.slice(triggerIndex + 1 + query.length);
+
+        // Execute
+        const argsParsed = CommandParser.parse(constructedInput);
+        if (!argsParsed) {
+            // Fallback
+            return { newValue: fullInputValue, shouldSend: false, isBotCommand: false };
+        }
+
+        const result = await cmd.execute(argsParsed.args);
+
+        if (typeof result === 'string') {
+            return {
+                newValue: before + result,
+                shouldSend: true,
+                isBotCommand: false
+            };
+        } else {
+            // Void return (side effect), clear command input
+            return {
+                newValue: before,
+                shouldSend: false,
+                isBotCommand: false
+            };
+        }
+
+    }, [triggerIndex, query]);
 
     const close = useCallback(() => {
         setIsOpen(false);

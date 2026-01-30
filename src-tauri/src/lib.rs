@@ -96,6 +96,10 @@ pub fn run() {
             let gateway_sender = Arc::new(Mutex::new(None));
             app.manage(bridge::gateway::GatewaySender(gateway_sender));
 
+            // Session状態の初期化
+            let session_state = bridge::gateway::SessionState(Arc::new(Mutex::new(None)));
+            app.manage(session_state);
+
             // Guild Member/Presence状態の初期化
             let guild_state = services::guild_state::create_guild_state();
             app.manage(guild_state);

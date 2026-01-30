@@ -243,12 +243,17 @@ pub async fn send_interaction(
     guild_id: Option<String>,
     application_id: String,
     data: social::InteractionData,
-    session_id: String,
-    state: State<'_, DiscordState>
+    state: State<'_, DiscordState>,
+    session_state: State<'_, crate::bridge::gateway::SessionState>
 ) -> Result<(), String> {
     let client = {
         let c = state.client.lock().unwrap();
         c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    let session_id = {
+        let lock = session_state.0.lock().map_err(|e| e.to_string())?;
+        lock.as_ref().cloned().ok_or("Session ID not available (Gateway not ready)")?
     };
 
     social::send_interaction(&client, channel_id, guild_id, application_id, data, session_id).await

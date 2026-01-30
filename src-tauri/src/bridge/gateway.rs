@@ -12,14 +12,16 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 pub struct GatewaySender(pub Arc<Mutex<Option<UnboundedSender<Message>>>>);
+pub struct SessionState(pub Arc<Mutex<Option<String>>>);
 
 #[tauri::command]
-pub async fn start_gateway(app: AppHandle, token: String, state: State<'_, GatewaySender>) -> Result<(), String> {
+pub async fn start_gateway(app: AppHandle, token: String, state: State<'_, GatewaySender>, session_state: State<'_, SessionState>) -> Result<(), String> {
     let state_clone = state.0.clone();
+    let session_clone = session_state.0.clone();
     tokio::spawn(async move {
         loop {
             println!("Connecting to Gateway...");
-            match connect_to_gateway(&app, &token, state_clone.clone()).await {
+            match connect_to_gateway(&app, &token, state_clone.clone(), session_clone.clone()).await {
                 Ok(_) => println!("Gateway connection closed, reconnecting..."),
                 Err(e) => {
                     eprintln!("Gateway error: {}", e);
@@ -86,7 +88,12 @@ pub async fn subscribe_member_list(
     }
 }
 
-async fn connect_to_gateway(app: &AppHandle, token: &str, sender_state: Arc<Mutex<Option<UnboundedSender<Message>>>>) -> Result<(), String> {
+async fn connect_to_gateway(
+    app: &AppHandle,
+    token: &str,
+    sender_state: Arc<Mutex<Option<UnboundedSender<Message>>>>,
+    session_state: Arc<Mutex<Option<String>>>
+) -> Result<(), String> {
     let url = Url::parse(GATEWAY_URL).map_err(|e| e.to_string())?;
     let (ws_stream, _) = connect_async(url).await.map_err(|e| e.to_string())?;
     println!("Connected to Discord Gateway");
@@ -166,6 +173,17 @@ async fn connect_to_gateway(app: &AppHandle, token: &str, sender_state: Arc<Mute
                     },
                     0 => { // Dispatch
                         let t = v["t"].as_str().unwrap_or("");
+                        
+                        // READY イベントで session_id を取得
+                        if t == "READY" {
+                            if let Some(session_id) = v["d"]["session_id"].as_str() {
+                                println!("Received READY event, session_id: {}", session_id);
+                                if let Ok(mut lock) = session_state.lock() {
+                                    *lock = Some(session_id.to_string());
+                                }
+                            }
+                        }
+
                         if t == "MESSAGE_CREATE" {
                             match serde_json::from_value::<crate::services::models::SimpleMessage>(map_message(&v["d"])) {
                                 Ok(m) => {

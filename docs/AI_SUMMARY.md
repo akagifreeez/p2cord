@@ -126,6 +126,10 @@ signaling-server/
             *   **Side-by-Side**: 配信画面を横並びで表示
         *   **Track-Level Focus**: 同一ピアの複数ストリームを個別に管理。フォーカス時も他のストリームはフィルムストリップに表示。
         *   **Filmstrip Enhancement**: フォーカス時に下部へ他ストリーム・参加者を横並び表示。
+    *   **Slash Command Implementation (2026-01-16)**:
+        *   **Client-Side Commands**: `/clear`, `/help`, `/echo` 等のクライアントサイドコマンドを実装。
+        *   **Custom Parser & Registry**: 引数パース、コマンド登録、Markdownレンダリング（太字、斜体、スポイラー等）の基盤を整備。
+        *   **Bot Command Integration**: Discord Application Commandを統合し、ピッカー上での補完と引数付き実行に対応。
 
 ### 🔄 In Progress / TODO
 *   リモートコントロール（マウス/キーボード）のFull Mesh対応
@@ -133,6 +137,7 @@ signaling-server/
 
 ### ⚠️ Known Issues
 *   **OP 14非公式API**: Gateway OP 14は非公式なため、Discord側の変更で動かなくなる可能性あり
+*   **Rate Limits**: コマンド連打時に429 Too Many Requestsが発生する場合がある
 
 ---
 

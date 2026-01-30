@@ -61,6 +61,7 @@ export interface MessageSnapshot {
 interface ChannelChatProps {
     status: string;
     selectedChannel: string | null;
+    selectedGuild: string | null; // 追加: BOTコマンド実行に必要
     channelName?: string;
     channels: Channel[]; // Needed for referencing channel names in search results
     messages: Message[];
@@ -88,6 +89,7 @@ interface ChannelChatProps {
 export function ChannelChat({
     status,
     selectedChannel,
+    selectedGuild,
     channelName,
     channels,
     messages,
@@ -121,13 +123,20 @@ export function ChannelChat({
 
     // BOTコマンドを取得
     useEffect(() => {
+        if (!selectedGuild) {
+            setBotCommands([]);
+            return;
+        }
+
         const fetchBotCommands = async () => {
             try {
                 const commands = await invoke<Array<{
                     id: string;
+                    version: string;
                     application_id: string;
                     name: string;
                     description: string;
+                    guild_id?: string;
                     options: Array<{
                         name: string;
                         option_type: number;
@@ -136,31 +145,30 @@ export function ChannelChat({
                         choices: Array<{ name: string; value: string | number }>;
                         options: Array<unknown>;
                     }>;
-                }>>('get_application_commands', { guildId: null });
+                    integration_types?: number[]; // Added
+                    contexts?: number[]; // Added
+                }>>('get_application_commands', { guildId: selectedGuild });
 
                 setBotCommands(commands.map(cmd => ({
                     type: 'bot' as const,
                     id: cmd.id,
+                    version: cmd.version,
                     application_id: cmd.application_id,
                     name: cmd.name,
                     description: cmd.description,
-                    options: cmd.options.map(opt => ({
-                        name: opt.name,
-                        option_type: opt.option_type,
-                        description: opt.description,
-                        required: opt.required,
-                        choices: opt.choices || [],
-                        options: []
-                    }))
+                    options: cmd.options,
+                    guild_id: cmd.guild_id,
+                    integration_types: cmd.integration_types,
+                    contexts: cmd.contexts
                 })));
-                console.log(`[ChannelChat] Loaded ${commands.length} bot commands`);
+                console.log(`[ChannelChat] Loaded ${commands.length} bot commands for guild ${selectedGuild}`);
             } catch (e) {
                 console.error('[ChannelChat] Failed to fetch bot commands:', e);
             }
         };
 
         fetchBotCommands();
-    }, []); // 一度だけ取得
+    }, [selectedGuild]);
 
     // メンションコンテキスト（チャンネル名解決用）
     const mentionContext: MentionContext = useMemo(() => ({
@@ -173,8 +181,13 @@ export function ChannelChat({
         // TODO: users と roles を追加（Gateway OP 14から取得したデータを使用）
     });
 
+    // Filter commands for current context
+    const filteredBotCommands = useMemo(() => {
+        return botCommands.filter(cmd => !cmd.guild_id || cmd.guild_id === selectedGuild);
+    }, [botCommands, selectedGuild]);
+
     // スラッシュコマンドピッカー（BOTコマンド含む）
-    const slashPicker = useSlashCommandPicker(botCommands);
+    const slashPicker = useSlashCommandPicker(filteredBotCommands);
 
     // Close context menu on click outside
     useEffect(() => {
@@ -268,7 +281,14 @@ export function ChannelChat({
                                             {m.kind === 'UserJoin' && `${m.author} joined the server.`}
                                             {m.kind === 'ChannelPinnedMessage' && `${m.author} pinned a message.`}
                                             {m.kind === 'ThreadCreated' && `${m.author} started a thread: ${m.content}`}
-                                            {!['UserJoin', 'ChannelPinnedMessage', 'ThreadCreated'].includes(m.kind) && `System Message: ${m.kind}`}
+                                        </span>
+                                        {m.kind === 'System' && (
+                                            <div className="text-gray-300 whitespace-pre-wrap text-left max-w-full">
+                                                {parseMessageContent(m.content, { mentionContext })}
+                                            </div>
+                                        )}
+                                        <span className="font-medium">
+                                            {!['UserJoin', 'ChannelPinnedMessage', 'ThreadCreated', 'System'].includes(m.kind) && `System Message: ${m.kind}`}
                                         </span>
                                         <span className="text-xs text-gray-600 ml-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                         <div className="flex-1 h-px bg-gray-800/50"></div>
@@ -476,38 +496,39 @@ export function ChannelChat({
                         />
                         {/* スラッシュコマンドピッカー */}
                         <SlashCommandPicker
-                            commands={slashPicker.commands}
+                            commands={filteredBotCommands}
                             isOpen={slashPicker.isOpen}
                             position={slashPicker.position}
                             selectedIndex={slashPicker.selectedIndex}
                             onSelect={async (command) => {
-                                const result = slashPicker.executeCommand(inputValue, command);
+                                const result = await slashPicker.executeCommand(inputValue, command);
 
                                 if (result.isBotCommand && result.botCommand) {
                                     // BOTコマンド実行
                                     try {
                                         await invoke('send_interaction', {
                                             channelId: selectedChannel,
-                                            guildId: null, // TODO: props から取得
+                                            guildId: selectedGuild,
                                             applicationId: result.botCommand.application_id,
                                             data: {
                                                 id: result.botCommand.id,
+                                                version: result.botCommand.version,
                                                 name: result.botCommand.name,
-                                                command_type: 1, // slash command
+                                                type: 1, // slash command
                                                 options: [], // TODO: 引数パース実装
                                             },
-                                            sessionId: 'p2cord-session', // TODO: Gateway session_id を使用
                                         });
                                         console.log(`[ChannelChat] Executed bot command: /${result.botCommand.name}`);
                                     } catch (e) {
                                         console.error('[ChannelChat] Failed to execute bot command:', e);
                                     }
                                     setInputValue('');
-                                } else if (result.shouldSend && result.newValue.trim()) {
-                                    // ビルトインコマンド
                                     await handleSendMessage(result.newValue, replyingTo?.id);
                                     setInputValue('');
                                     setReplyingTo(null);
+                                } else {
+                                    // Side effect command (like /clear) or autocomplete
+                                    setInputValue(result.newValue);
                                 }
                                 slashPicker.close();
                                 inputRef.current?.focus();
@@ -532,22 +553,22 @@ export function ChannelChat({
                                 // スラッシュコマンドピッカーのキーボード操作
                                 const slashHandled = slashPicker.handleKeyDown(e);
                                 if (typeof slashHandled === 'object' && slashHandled.selected) {
-                                    const result = slashPicker.executeCommand(inputValue, slashHandled.selected);
+                                    const result = await slashPicker.executeCommand(inputValue, slashHandled.selected);
 
                                     if (result.isBotCommand && result.botCommand) {
                                         // BOTコマンド実行
                                         try {
                                             await invoke('send_interaction', {
                                                 channelId: selectedChannel,
-                                                guildId: null,
+                                                guildId: selectedGuild,
                                                 applicationId: result.botCommand.application_id,
                                                 data: {
                                                     id: result.botCommand.id,
+                                                    version: result.botCommand.version,
                                                     name: result.botCommand.name,
-                                                    command_type: 1,
+                                                    type: 1,
                                                     options: [],
                                                 },
-                                                sessionId: 'p2cord-session',
                                             });
                                             console.log(`[ChannelChat] Executed bot command: /${result.botCommand.name}`);
                                         } catch (err) {
@@ -558,11 +579,107 @@ export function ChannelChat({
                                         await handleSendMessage(result.newValue, replyingTo?.id);
                                         setInputValue('');
                                         setReplyingTo(null);
+                                    } else {
+                                        // Side effect command
+                                        setInputValue(result.newValue);
                                     }
                                     slashPicker.close();
                                     return;
                                 }
                                 if (slashHandled === true) return;
+
+                                // 2. Typed Command (Start with /)
+                                // If picker didn't handle it, check if it's a valid command string
+                                if (e.key === 'Enter' && !e.shiftKey && inputValue.trim().startsWith('/')) {
+                                    const { CommandParser } = await import('../services/commands/parser');
+                                    const { commandRegistry } = await import('../services/commands/registry');
+
+                                    const parsed = CommandParser.parse(inputValue);
+                                    if (parsed) {
+                                        // A. Built-in Command
+                                        const cmd = commandRegistry.get(parsed.name);
+                                        if (cmd) {
+                                            e.preventDefault();
+                                            try {
+                                                const result = await cmd.execute(parsed.args);
+                                                if (typeof result === 'string') {
+                                                    await handleSendMessage(result, replyingTo?.id);
+                                                }
+                                                // If void, just clear (side effect done)
+                                                setInputValue('');
+                                                setReplyingTo(null);
+                                            } catch (err) {
+                                                console.error('Command failed:', err);
+                                            }
+                                            return;
+                                        }
+
+                                        // B. Bot Command (Simple match by name for now)
+                                        const botCmd = filteredBotCommands.find(b => b.name === parsed.name);
+                                        if (botCmd) {
+                                            e.preventDefault();
+                                            console.log("[ChannelChat] Attempting to execute bot command:", JSON.stringify(botCmd, null, 2));
+
+                                            // Map parsed arguments to interaction options
+                                            // Fix: Rust structure expects `option_type`
+                                            const options: Array<{ name: string; value: string | number | boolean; type: number }> = [];
+                                            const positionalArgs = parsed.args['_all'] || [];
+
+                                            // Simple mapping: 
+                                            // 1. Map named args directly if they match option names
+                                            // 2. Map remaining positional args to remaining required options
+
+                                            if (botCmd.options) {
+                                                botCmd.options.forEach((opt, idx) => {
+                                                    let val: string | number | boolean | undefined;
+
+                                                    // Check for named arg
+                                                    if (parsed.args[opt.name] && parsed.args[opt.name].length > 0) {
+                                                        val = parsed.args[opt.name][0];
+                                                    }
+                                                    // Else take positional if available (fallback)
+                                                    // This is risky if positional args are skipped, but basic implementation
+                                                    else if (idx < positionalArgs.length) {
+                                                        const posVal = positionalArgs[idx];
+                                                        val = posVal;
+                                                    }
+
+                                                    if (val !== undefined) {
+                                                        // Type conversion if necessary (e.g. integer)
+                                                        if (opt.option_type === 4 || opt.option_type === 10) { // Integer or Number
+                                                            const num = Number(val);
+                                                            if (!isNaN(num)) val = num;
+                                                        } else if (opt.option_type === 5) { // Boolean
+                                                            val = val === 'true' || val === true;
+                                                        }
+
+                                                        options.push({
+                                                            name: opt.name,
+                                                            value: val,
+                                                            type: opt.option_type
+                                                        });
+                                                    }
+                                                });
+                                            }
+
+                                            await invoke('send_interaction', {
+                                                channelId: selectedChannel,
+                                                guildId: selectedGuild,
+                                                applicationId: botCmd.application_id,
+                                                data: {
+                                                    id: botCmd.id,
+                                                    version: botCmd.version,
+                                                    name: botCmd.name,
+                                                    type: 1,
+                                                    options: options,
+                                                },
+                                            });
+                                            console.log(`[ChannelChat] Executed bot command: /${botCmd.name}`, options);
+                                            setInputValue('');
+                                            return;
+                                        }
+                                    }
+                                }
 
                                 // メンションピッカーのキーボード操作
                                 const handled = mentionPicker.handleKeyDown(e);
