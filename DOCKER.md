@@ -1,6 +1,15 @@
 # P2D Docker Deployment
 
-Signaling ServerとTURNサーバーをDockerで簡単に起動できます。
+本ドキュメントは、P2Dアーキテクチャにおける **Signaling & Relay Layer** (Signaling Server + TURN Server) の構築手順を記述します。
+
+## サービス構成
+
+| Service   | Port        | 用途                     |
+| --------- | ----------- | ------------------------ |
+| signaling | 8080        | WebSocket シグナリング   |
+| turn      | 3478        | TURN/STUN (UDP/TCP)      |
+| turn      | 5349        | TURNS (TLS over TCP/UDP) |
+| turn      | 49152-49200 | Relay ポート (UDP)       |
 
 ## クイックスタート
 
@@ -15,15 +24,6 @@ docker-compose up -d
 # 3. ログ確認
 docker-compose logs -f
 ```
-
-## サービス構成
-
-| Service   | Port        | 用途                     |
-| --------- | ----------- | ------------------------ |
-| signaling | 8080        | WebSocket シグナリング   |
-| turn      | 3478        | TURN/STUN (UDP/TCP)      |
-| turn      | 5349        | TURNS (TLS over TCP/UDP) |
-| turn      | 49152-49200 | Relay ポート (UDP)       |
 
 ## P2Dアプリでの設定
 
@@ -45,6 +45,8 @@ TURN_PASS=your_strong_password
 ```
 
 ### 2. 外部IPの設定（VPS等で必要）
+
+TURNサーバーが適切に候補(Candidates)を生成するために、外部IPアドレスの指定が必須です。
 
 ```bash
 # .env

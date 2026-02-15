@@ -266,3 +266,15 @@ pub struct TypingStart {
     pub timestamp: u64,
 }
 
+#[derive(Deserialize, Debug)]
+pub struct DiscordDMChannel {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub last_message_id: Option<String>,
+    pub recipients: Vec<DiscordUser>,
+    pub name: Option<String>,
+    pub icon: Option<String>,
+    pub owner_id: Option<String>,
+}
+

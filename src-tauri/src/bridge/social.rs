@@ -1,5 +1,5 @@
 use tauri::State;
-use crate::services::models::{SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember};
+use crate::services::models::{SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember, DiscordUser};
 use crate::services::state::DiscordState;
 use crate::services::social;
 use crate::store::DatabaseState as DbState; 
@@ -12,6 +12,26 @@ pub async fn get_guilds(state: State<'_, DiscordState>) -> Result<Vec<SimpleGuil
     };
 
     social::fetch_guilds(&client).await
+}
+
+#[tauri::command]
+pub async fn get_dms(state: State<'_, DiscordState>) -> Result<Vec<SimpleChannel>, String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::fetch_dms(&client).await
+}
+
+#[tauri::command]
+pub async fn get_current_user(state: State<'_, DiscordState>) -> Result<DiscordUser, String> {
+    let client = {
+        let c = state.client.lock().unwrap();
+        c.as_ref().cloned().ok_or("Client not initialized")?
+    };
+
+    social::fetch_current_user(&client).await
 }
 
 #[tauri::command]

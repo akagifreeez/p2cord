@@ -66,7 +66,10 @@ pub fn run() {
             bridge::social::get_guild_members_from_store,
             bridge::social::get_voice_states,
             bridge::social::get_application_commands,
+            bridge::social::get_application_commands,
             bridge::social::send_interaction,
+            bridge::social::get_dms,
+            bridge::social::get_current_user,
             
             // Gateway (moved to bridge as it is a controller)
             bridge::gateway::start_gateway,

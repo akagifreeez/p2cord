@@ -1,5 +1,12 @@
 # P2D (P2P Desktop Sharing) Project Context
 
+## Documentation Hierarchy (Updated 2026-01-15)
+*   **`docs/AI_SUMMARY.md`**: This file. Current status and context.
+*   **`docs/ARCHITECTURE.md`**: Target system architecture (Room concept, Service layer).
+*   **`docs/DEV_GUIDELINE.md`**: UX/Performance guidelines and coding standards.
+*   **`docs/ROADMAP.md`**: Detailed feature roadmap and backlog.
+*   **`docs/archive/`**: Archived specifications and temporary files.
+
 ## Overview
 P2D is a secure, low-latency **Full Mesh Peer-to-Peer** desktop sharing application built with Tauri v2, React, and WebRTC.
 It features multi-peer screen sharing, voice chat (microphone), text chat, and a premium "Cyberpunk Glass" UI.
@@ -85,7 +92,7 @@ signaling-server/
 
 ---
 
-## Current Status (2026-01-14)
+## Current Status (2026-02-16)
 
 ### ✅ Completed
 *   **Full Mesh P2P Architecture**: Host/Viewer区別を廃止、対等なピア接続
@@ -141,9 +148,12 @@ signaling-server/
 
 ---
 
-## Key P2D Architecture (Rust Backend)
+## Key P2D Architecture (Rust Backend - Planned / In Progress)
+> [!NOTE]
+> Currently, P2P logic is implemented in Frontend (`src/hooks/useWebRTC.ts`).
+> The following backend structure is the **Target Architecture** for Phase 2. `services/media` is currently under research/development.
 
-### services/media/p2d/
+### services/media/p2d/ (Planned)
 | File           | Description                                                    |
 | :------------- | :------------------------------------------------------------- |
 | `mod.rs`       | P2D初期化、再接続ループ、ハートビート、オーディオ管理          |
@@ -151,21 +161,24 @@ signaling-server/
 | `signaling.rs` | シグナリングメッセージ定義（Join/Leave/Offer/Answer/Ice/Ping） |
 | `audio.rs`     | Opusエンコード/デコード、cpalによる入出力                      |
 
-### services/media/mod.rs
+### services/media/mod.rs (Planned)
 *   `join_conference`: P2Pセッション開始
 *   `leave_conference`: P2Pセッション終了
 
-### bridge/room.rs
-*   `join_room`: チャット履歴取得 + P2P開始
-*   `leave_room`: P2P終了
+### bridge/room.rs (Implemented)
+*   `fetch_messages`: チャット履歴取得 (P2P開始トリガーは現在Frontend側で制御)
+
 
 ---
 
 ## Instructions for AI Agents
-1.  **Context Loading**: セッション開始時にこのファイルを読むこと。
-2.  **Style Consistency**: Cyberpunk Glass テーマを維持（`glass-card`, `btn-primary`, `text-cyan-400`）。
-3.  **Code Safety**:
-    *   `p2d/mod.rs` 変更時は再接続ループとオーディオフラグの整合性に注意。
-    *   Rust バックエンド変更時は `tauri dev` 再起動が必要。
-4.  **Documentation**: 大きな変更時はこのファイルを更新すること。
+1.  **Read First**: Check `GEMINI.md` for role definitions.
+2.  **Context Loading**: Read this file (`AI_SUMMARY.md`) at the start of every session.
+3.  **Documentation**:
+    *   Follow `docs/ARCHITECTURE.md` for system design.
+    *   Follow `docs/DEV_GUIDELINE.md` for coding standards.
+4.  **Style Consistency**: Cyberpunk Glass theme (`glass-card`, `btn-primary`, `text-cyan-400`).
+5.  **Code Safety**:
+    *   Caution with `p2d/mod.rs` (audio/reconnection loops).
+    *   Restart `tauri dev` after Rust changes.
 

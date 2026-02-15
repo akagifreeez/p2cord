@@ -1,7 +1,7 @@
 use crate::services::models::{
     DiscordGuild, DiscordChannel, DiscordMessage, DiscordRole, DiscordMember,
     SimpleGuild, SimpleChannel, SimpleMessage, SimpleRole, SimpleMember,
-    MessageSnapshot, SimpleMessageSnapshotData, DiscordUser
+    MessageSnapshot, SimpleMessageSnapshotData, DiscordUser, DiscordDMChannel
 };
 use reqwest::Client;
 
@@ -243,7 +243,53 @@ pub async fn fetch_members(client: &Client, guild_id: String) -> Result<Vec<Simp
     println!("[fetch_members] User token limitation: cannot fetch member list via REST API. Guild: {}", guild_id);
     
     // 空のリストを返す（エラーにはしない）
+    // 空のリストを返す（エラーにはしない）
     Ok(vec![])
+}
+
+pub async fn fetch_dms(client: &Client) -> Result<Vec<SimpleChannel>, String> {
+    let res = client.get(format!("{}/users/@me/channels", API_BASE))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("API Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    let channels: Vec<DiscordDMChannel> = res.json().await.map_err(|e| e.to_string())?;
+
+    Ok(channels.into_iter().map(|c| {
+        // DM name fallback to recipients
+        let name = if let Some(n) = c.name {
+            n
+        } else {
+            c.recipients.iter().map(|u| u.username.clone()).collect::<Vec<_>>().join(", ")
+        };
+
+        SimpleChannel {
+            id: c.id,
+            name,
+            kind: map_channel_type(c.kind),
+            parent_id: None,
+            position: 0,
+            last_message_id: c.last_message_id,
+        }
+    }).collect())
+}
+
+pub async fn fetch_current_user(client: &Client) -> Result<DiscordUser, String> {
+    let res = client.get(format!("{}/users/@me", API_BASE))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !res.status().is_success() {
+        return Err(format!("API Error: Status {} - {}", res.status(), res.text().await.unwrap_or_default()));
+    }
+
+    let user: DiscordUser = res.json().await.map_err(|e| e.to_string())?;
+    Ok(user)
 }
 
 pub async fn fetch_messages(client: &Client, channel_id: String, before_id: Option<String>) -> Result<Vec<SimpleMessage>, String> {
